@@ -1,0 +1,2142 @@
+#!/usr/bin/env zsh
+
+# ==============================================================================
+# MacOS typical CLI commands install script version 1.01
+# ==============================================================================
+# set -x
+# set -eu
+# set -o err_return
+# set -o no_unset
+# set -o pipefail
+
+# Simple way to kill the spinner if it is running
+if  killall tail 2> /dev/null ; then fi
+
+# ==============================================================================
+# Script setup
+# ==============================================================================
+
+install_prefix="/usr/local"
+
+# GNU libtool does not like relative run-paths unfortunately
+
+
+export MACOSX_DEPLOYMENT_TARGET=15.01.01
+export MACOSX_SDK_PATH="$(xcrun --show-sdk-path)"
+
+# export CFLAGS="-I${install_prefix}/include -I${MACOSX_SDK_PATH}/usr/include"
+# export CPPFLAGS="-I${install_prefix}/include -I${MACOSX_SDK_PATH}/usr/include"
+# export CXXFLAGS="-I${install_prefix}/include -I${MACOSX_SDK_PATH}/usr/include"
+# export REL_LDFLAGS="-rpath @loader_path/../lib -L${install_prefix}/lib"
+# export ABS_LDFLAGS="-rpath ${install_prefix}/lib -L${install_prefix}/lib"
+# export PREV_LDFLAGS="-rpath ${install_prefix}/lib -L${install_prefix}/lib"
+# export LDFLAGS="-L${install_prefix}/lib -L${MACOSX_SDK_PATH}/usr/lib"
+export PATH="${PATH:-}:/Users/aredigranes/Library/Python/3.9/bin:${install_prefix}/bin"
+export DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH:-}:${install_prefix}/lib"
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:${install_prefix}/lib"
+export LC_RPATH="${LC_RPATH:-}:${install_prefix}/lib"
+
+mkdir -p builds sources logs manifests
+
+c_jobs=$(("$(getconf _NPROCESSORS_ONLN)" + "$(echo "$(getconf _NPROCESSORS_ONLN) / 2" | bc)"))
+
+SWD="$PWD"
+log_out="$SWD/logs/log_out.log"
+log_err="$SWD/logs/log_err.log"
+exec >"$log_out" 2>"$log_err"
+
+print_prepackage1="\033[38;2;166;209;137;48;2;35;38;52m  %-22s  \033[38;2;255;255;255;48;2;0;0;0m %-15s\033[38;2;166;209;137;48;2;35;38;52m  \033[0m\n"
+print_prepackage2="\033[1F\033[38;2;166;209;137;48;2;35;38;52m  %-22s  \033[38;2;255;255;255;48;2;0;0;0m %-15s\033[38;2;166;209;137;48;2;35;38;52m  \033[0m\n"
+print_prepackage3="\033[1F\033[38;2;166;209;137;48;2;35;38;52m  %-22s  \033[38;2;64;160;43;48;2;0;0;0m %-15s\033[38;2;166;209;137;48;2;35;38;52m  \033[0m\n"
+print_prepackage4="\033[38;2;166;209;137;48;2;35;38;52m  %-22s  \033[38;2;229;200;144;48;2;0;0;0m %-15s\033[38;2;166;209;137;48;2;35;38;52m  \033[0m\n"
+print_prepackage5="\033[1F\033[38;2;166;209;137;48;2;35;38;52m  %-22s  \033[38;2;210;15;57;48;2;0;0;0m %-15s\033[38;2;166;209;137;48;2;35;38;52m  \033[0m %-20s\n"
+
+# ==============================================================================
+# functions
+# ==============================================================================
+
+password_check() {
+    if ! sudo -Nnv 2>/dev/null; then
+        printf "\033[1F\033[45C" > /dev/tty
+        sudo -K
+        sudo -v -p "Please enter password for system install: "
+        printf "\033[1F%-${COLUMNS}s\n" " " > /dev/tty
+    fi
+}
+
+pre_script_manifest() {
+    if [[ -f "$SWD/manifests/_script.pre-manifest" ]]; then
+        # script likely crashed or was aborted
+        rm "$SWD/manifests/_script.pre-manifest"
+    else
+        # find "$install_prefix" -type f -exec md5sum {} \; | sort > "$SWD/manifests/_script.pre-manifest"
+    fi
+}
+
+post_script_manifest() {
+    if [[ -f "$SWD/manifests/_script.pre-manifest" ]]; then
+        find "$install_prefix" -type f -exec md5sum {} \; | sort > "$SWD/manifests/_script.post-manifest"
+        date +"%Y-%m-%d %H:%M:%S" >> "$SWD/manifests/_script.manifest"
+        echo "NEW" >> "$SWD/manifests/_script.manifest"
+        comm -13 <(cut -d' ' -f3 "$SWD/manifests/_script.pre-manifest") <(cut -d' ' -f3 "$SWD/manifests/_script.post-manifest") >> "$SWD/manifests/_script.manifest"
+        echo "CHANGE" >> "$SWD/manifests/_script.manifest"
+        comm -23 <(cut -d' ' -f3 "$SWD/manifests/_script.post-manifest") <(grep -Ff <(cut -d' ' -f1,2 "$SWD/manifests/_script.pre-manifest") <(cut -d' ' -f1,2 "$SWD/manifests/_script.post-manifest")) >> "$SWD/manifests/_script.manifest"
+        echo "DONE" >> "$SWD/manifests/_script.manifest"
+        rm "$SWD/manifests/_script.pre-manifest" "$SWD/manifests/_script.post-manifest"
+    fi
+}
+
+spinner() {
+    local frames=(
+        "  |◐            |\033[17D"
+        "  | ◓           |\033[17D"
+        "  |  ◑          |\033[17D"
+        "  |   ◒         |\033[17D"
+        "  |    ◐        |\033[17D"
+        "  |     ◓       |\033[17D"
+        "  |      ◑      |\033[17D"
+        "  |       ◒     |\033[17D"
+        "  |        ◐    |\033[17D"
+        "  |         ◓   |\033[17D"
+        "  |          ◑  |\033[17D"
+        "  |           ◒ |\033[17D"
+        "  |            ◐|\033[17D"
+        "  |           ◒ |\033[17D"
+        "  |          ◑  |\033[17D"
+        "  |         ◓   |\033[17D"
+        "  |        ◐    |\033[17D"
+        "  |       ◒     |\033[17D"
+        "  |      ◑      |\033[17D"
+        "  |     ◓       |\033[17D"
+        "  |    ◐        |\033[17D"
+        "  |   ◒         |\033[17D"
+        "  |  ◑          |\033[17D"
+        "  | ◓           |\033[17D"
+    )
+    local spin=0
+    tail -n 0 -f "$log_out" | while read; do
+        print -n "${frames[spin]}" > /dev/tty
+        spin=$(( (spin + 1) % ${#frames[@]} ))
+    done
+}
+
+spinner_old() {
+    local spin=0
+    tail -n 0 -f "$log_out" | while read; do
+        if (( spin == 0 )); then
+            print -n "  |◐    |\033[9D" > /dev/tty
+            spin=1
+        elif (( spin == 1 )); then
+            print -n "  | ◓   |\033[9D" > /dev/tty
+            spin=2
+        elif (( spin == 2 )); then
+            print -n "  |  ◑  |\033[9D" > /dev/tty
+            spin=3
+        elif (( spin == 3 )); then
+            print -n "  |   ◒ |\033[9D" > /dev/tty
+            spin=4
+        elif (( spin == 4 )); then
+            print -n "  |    ◐|\033[9D" > /dev/tty
+            spin=5
+        elif (( spin == 5 )); then
+            print -n "  |   ◒ |\033[9D" > /dev/tty
+            spin=6
+        elif (( spin == 6 )); then
+            print -n "  |  ◑  |\033[9D" > /dev/tty
+            spin=7
+        else
+            print -n "  | ◓   |\033[9D" > /dev/tty
+            spin=0
+        fi
+    done
+}
+
+spinner &
+SPINNER_PID=$!
+
+halt_script() {
+    exit_status=${1:=1}
+    line_no=${2:=0}
+    in_function=${3:="Unknown"}
+    in_param=${4:="Unknown"}
+    in_args=${5:="Unknown"}
+    trap - ERR HUP INT QUIT ILL TRAP ABRT EMT FPE KILL BUS SEGV SYS PIPE ALRM TERM URG STOP TSTP CONT CHLD TTIN TTOU IO XCPU XFSZ VTALRM PROF WINCH INFO USR1 USR2 ZERR
+    echo $argv
+    kill $SPINNER_PID 2>/dev/null
+    wait $SPINNER_PID 2>/dev/null
+    printf "$print_prepackage1" "Script" "Post-manifest" > /dev/tty
+    post_script_manifest
+    printf "$print_prepackage5" "Script" "Interrupted" "$in_function Line $line_no Status $exit_status ($in_args)"> /dev/tty
+    printf "\033[38;2;35;38;52m\033[7m▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇\033[0m\n" > /dev/tty
+    exit $exit_status
+}
+
+trap 'halt_script $? $LINENO $0 $_ ${*} $! ${#} $- $argv' ERR HUP INT QUIT ILL TRAP ABRT EMT FPE KILL BUS SEGV SYS PIPE ALRM TERM URG STOP TSTP CONT CHLD TTIN TTOU IO XCPU XFSZ VTALRM PROF WINCH INFO USR1 USR2 ZERR
+
+printf "\033[38;2;35;38;52m▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂\033[0m\n" > /dev/tty
+
+printf "$print_prepackage1" "Script" "Ready" > /dev/tty
+printf "$print_prepackage2" "Script" "Manifesting" > /dev/tty
+
+pre_script_manifest
+printf "$print_prepackage2" "Script" "Started" > /dev/tty
+
+pre_install_manifest() {
+    local package=$1
+    find "$install_prefix" -type f | sort > "$SWD/manifests/$package.pre-manifest"
+}
+
+post_install_manifest() {
+    local package=$1
+    find "$install_prefix" -type f | sort > "$SWD/manifests/$package.post-manifest"
+    date +"%Y-%m-%d %H:%M:%S" >> "$SWD/manifests/$package.manifest"
+    echo "NEW" >> "$SWD/manifests/$package.manifest"
+    comm -13 "$SWD/manifests/$package.pre-manifest" "$SWD/manifests/$package.post-manifest" >> "$SWD/manifests/$package.manifest"
+    echo "DONE" >> "$SWD/manifests/$package.manifest"
+    rm "$SWD/manifests/$package.pre-manifest" "$SWD/manifests/$package.post-manifest"
+}
+
+install_python_pip() {
+    local package=$1
+
+    printf "  =====  $package =====  \n"  | tee /dev/stderr
+    if not_stamp_timeout "$package"; then
+        printf "$print_prepackage4" "$package" "Skipping" > /dev/tty
+        return 0
+    fi
+    printf "$print_prepackage1" "$package" "Manifesting" > /dev/tty
+    pre_install_manifest "$package"
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+
+    /usr/bin/pip3 install --upgrade "$package"
+
+    set_timeout_stamp "$package"
+    post_install_manifest "$package"
+    printf "$print_prepackage3" "$package" "Completed" > /dev/tty
+}
+
+install_node_npm() {
+    local package=$1
+
+    printf "  =====  $package (node) =====  \n"  | tee /dev/stderr
+    if not_stamp_timeout "node_$package"; then
+        printf "$print_prepackage4" "$package (node)" "Skipping" > /dev/tty
+        return 0
+    fi
+    printf "$print_prepackage1" "$package (node)" "Manifesting" > /dev/tty
+    pre_install_manifest "node_$package"
+    printf "$print_prepackage2" "$package (node)" "Installing" > /dev/tty
+
+    password_check
+    # sudo /usr/local/bin/npm install -g "$package"
+
+    set_timeout_stamp "node_$package"
+    post_install_manifest "node_$package"
+    printf "$print_prepackage3" "$package (node)" "Completed" > /dev/tty
+}
+
+install_lua_rocks() {
+    local package=$1
+
+    printf "  =====  $package =====  \n"  | tee /dev/stderr
+    if not_stamp_timeout "$package"; then
+        printf "$print_prepackage4" "$package" "Skipping" > /dev/tty
+        return 0
+    fi
+    printf "$print_prepackage1" "$package" "Manifesting" > /dev/tty
+    pre_install_manifest "$package"
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+
+    password_check
+    sudo /usr/local/bin/luarocks install "$package"
+
+    set_timeout_stamp "$package"
+    post_install_manifest "$package"
+    printf "$print_prepackage3" "$package" "Completed" > /dev/tty
+}
+
+download_git() {
+    local package=$1
+    local git_url=$2
+    local git_checkout=$3
+    local source_dir=$4
+
+    if [[ ! -d "$source_dir" ]]; then
+        printf "$print_prepackage2" "$package" "Fetching" > /dev/tty
+        git -C "$SWD/sources" clone "$git_url" "$package"
+        git -C "$source_dir" checkout $git_checkout
+        git -C "$source_dir" submodule update --init
+    else
+        printf "$print_prepackage2" "$package" "Upgrading" > /dev/tty
+        git -C "$source_dir" checkout $git_checkout
+        git -C "$source_dir" pull
+    fi
+}
+
+download_svn() {
+
+    local package=$1
+    local svn_url=$2
+    local svn_checkout=$3
+    local source_dir=$4
+
+    if [[ ! -d "$source_dir" ]]; then
+        printf "$print_prepackage2" "$package" "Fetching" > /dev/tty
+        svn \
+            --config-option=servers:global:ssl-trust-default-ca=yes \
+            --config-option=servers:global:ssl-authority-files="$install_prefix/share/ca-certificates/root_certs.pem" \
+            checkout "$svn_url" "$source_dir"
+    else
+        printf "$print_prepackage2" "$package" "Upgrading" > /dev/tty
+        cd "$source_dir"
+        svn \
+            --config-option=servers:global:ssl-trust-default-ca=yes \
+            --config-option=servers:global:ssl-authority-files="$install_prefix/share/ca-certificates/root_certs.pem" \
+            update
+    fi
+}
+
+download_https() {
+    local package=$1
+    local package_name=$2
+    local package_hostpath=$3
+    local source_dir=$4
+
+    local package_url="${package_hostpath}${package_name}"
+    local package_file="$SWD/sources/${package_name}"
+    local package_etag="${package_file}.etag"
+
+    local current_etag=$(curl -sI "$package_url" | grep -i ETag | awk '{print $2}' | tr -d '"')
+    local last_modified=$(curl -sI "$package_url" | grep -i Last-Modified | cut -d' ' -f2-)
+    local formatted_date=""
+    if [[ -n "$last_modified" ]]; then
+        formatted_date=$(date -jf "%a, %d %b %Y %T %Z" "$last_modified" +"%Y-%m-%d%H:%M:%S")
+    fi
+
+    local local_etag=""
+    local local_last_modified=""
+
+    if [[ -f $package_etag ]]; then
+        local_etag=$(cat "$package_etag")
+        local_last_modified=$(stat -f "%Sm" -t "%Y-%m-%d%H:%M:%S" "$package_file")
+    fi
+
+    local compressed_types=(
+        "application/x-gzip"        # .gz
+        "application/gzip"          # .gz
+        "application/zip"           # .zip
+        "application/x-bzip2"       # .bz2
+        "application/x-xz"          # .xz
+        "application/x-compress"    # .Z
+        "application/x-tar"         # .tar
+        "application/x-rar"         # .rar
+        "application/x-7z-compressed" # .7z
+    )
+
+    if [[ ! -d "$source_dir" ]] || [[ "$current_etag" != "$local_etag" ]] || [[ "$formatted_date" != "$local_last_modified" ]]; then
+        printf "$print_prepackage2" "$package" "Downloading" > /dev/tty
+        cd "$SWD/sources/"
+        curl -sOL "$package_url"
+        if [[ " ${compressed_types[@]} " =~ " $(file --brief --mime-type "$package_file") " ]]; then
+            mkdir -p "$source_dir"
+            printf "$print_prepackage2" "$package" "Extracting" > /dev/tty
+            tar xf "$package_file" -C "$source_dir" --strip-components=1
+        fi
+        if [[ "$formatted_date" != "" ]]; then
+            touch -d "$formatted_date" "$package_file"
+        fi
+        echo "$current_etag" > "$package_etag"
+    else
+        printf "$print_prepackage2" "$package" "Up to date" > /dev/tty
+    fi
+}
+
+target_exists() {
+    grep -E "^[a-zA-Z0-9_-]+:.*?" "Makefile" | grep -q "^$1:"
+    return $?
+}
+
+not_stamp_timeout() {
+    local package=$1
+    local last_completion=0
+    if [[ -f "$SWD/sources/${package}.stamp" ]]; then
+        last_completion=$(<"$SWD/sources/${package}.stamp")
+    fi
+    time_difference=$(( $(date +%s) - last_completion ))
+    if (( time_difference > 36000 )); then
+        return 1
+    else
+        return 0
+    fi
+}
+
+set_timeout_stamp() {
+    local package=$1
+    echo "$(date +%s)" > "$SWD/sources/${package}.stamp"
+}
+
+is_url() {
+    local url="${1}"
+    local regex='^(https?|ftp)://[^[:space:]]+$'
+    if [[ $url =~ $regex ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+add_rpath_if_missing() {
+    local file="$1"
+    local rpath="$2"
+    if [[ -f "$file" ]]; then
+        if ! otool -l "$file" | grep -q "LC_RPATH"; then
+            sudo install_name_tool -add_rpath "$rpath" "$file"
+        fi
+    fi
+}
+
+using_configure_in_source() {
+    local package=$1
+    local source_dir=$2
+    local configure_command=$3
+    local configure_command_options=$4
+
+    cd $source_dir
+
+    if [[ -f "Makefile" ]]; then
+        printf "$print_prepackage2" "$package" "Cleaning" > /dev/tty
+        if target_exists "distclean"; then
+            make distclean
+        elif target_exists "clean"; then
+            make clean
+        else
+            echo "Couldn't clean"
+        fi
+    fi
+
+    printf "$print_prepackage2" "$package" "Configuring" > /dev/tty
+
+    eval "${source_dir}/${configure_command} ${configure_command_options}"
+
+    printf "$print_prepackage2" "$package" "Building" > /dev/tty
+    make -j$c_jobs
+
+    # TODO find a better solution for node.js in the future
+    password_check
+    if [[ $package == "node" ]]; then
+        printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+        if ! sudo make install; then
+            printf "$print_prepackage2" "$package" "Repairing" > /dev/tty
+            local rpath_to_add="${install_prefix}/lib"
+            local files_to_update=(
+                "$source_dir/out/Release/bytecode_builtins_list_generator"
+                "$source_dir/out/Release/cctest"
+                "$source_dir/out/Release/embedtest"
+                "$source_dir/out/Release/gen-regexp-special-case"
+                "$source_dir/out/Release/libnode.131.dylib"
+                "$source_dir/out/Release/mksnapshot"
+                "$source_dir/out/Release/node"
+                "$source_dir/out/Release/node_js2c"
+                "$source_dir/out/Release/node_mksnapshot"
+                "$source_dir/out/Release/overlapped-checker"
+                "$source_dir/out/Release/torque"
+            )
+            for file in "${files_to_update[@]}"; do
+                add_rpath_if_missing "$file" "$rpath_to_add"
+            done
+            sudo make install
+        fi
+    else
+        printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+        sudo make install
+    fi
+}
+
+using_configure_build_dir() {
+    local package=$1
+    local source_dir=$2
+    local configure_command=$3
+    local configure_command_options=$4
+
+    local build_dir="$SWD/builds/$package"
+
+    if [[ -d "$build_dir" ]]; then
+        printf "$print_prepackage2" "$package" "Cleaning" > /dev/tty
+        rm -rf $build_dir
+    fi
+
+    mkdir -p "$build_dir"
+    cd "$build_dir"
+
+    printf "$print_prepackage2" "$package" "Configuring" > /dev/tty
+    eval "${source_dir}/${configure_command} ${configure_command_options}"
+
+    printf "$print_prepackage2" "$package" "Building" > /dev/tty
+    make -j$c_jobs
+
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+    password_check
+    sudo make install
+}
+
+using_configure_netpbm() {
+    local package=$1
+    local source_dir=$2
+    local configure_command=$3
+    local configure_command_options=$4
+
+    local build_dir="$SWD/builds/$package"
+
+    cd $source_dir
+
+    if [[ -d "$build_dir" ]]; then
+        printf "$print_prepackage2" "$package" "Cleaning" > /dev/tty
+        rm -rf $build_dir
+    fi
+
+    printf "$print_prepackage2" "$package" "Configuring" > /dev/tty
+
+    echo "
+        DEFAULT_TARGET = nonmerge
+        BUILD_FIASCO = Y
+        CC = cc
+        LD = cc
+        LINKERISCOMPILER = Y
+        LINKER_CAN_DO_EXPLICIT_LIBRARY = N
+        INTTYPES_H = <inttypes.h>
+        HAVE_INT64 = Y
+        WANT_SSE = N
+        CC_FOR_BUILD = cc
+        LD_FOR_BUILD = cc
+        CFLAGS_FOR_BUILD = ${CFLAGS} -I/usr/include/libxml2 -Wno-implicit-function-declaration
+        LDFLAGS_FOR_BUILD = ${LDFLAGS} -lxml2
+        WINDRES = windres
+        INSTALL = ${source_dir}/buildtools/install.sh
+        STRIPFLAG = -s
+        SYMLINK = ln -s
+        MANPAGE_FORMAT = nroff
+        AR = ar
+        RANLIB = ranlib
+        LEX = flex
+        PKG_CONFIG = pkg-config
+        CFLAGS = ${CFLAGS} -Wno-implicit-function-declaration
+        LDFLAGS = ${LDFLAGS} -lxml2
+        EXE =
+        LDSHLIB = --shared -o \$(SONAME)
+        LDRELOC = NONE
+        CFLAGS_SHLIB = -fno-common
+        SHLIB_CLIB = -lc
+        NEED_RUNTIME_PATH = Y
+        RPATHOPTNAME = -rpath
+        NETPBMLIB_RUNTIME_PATH = ${install_prefix}
+        TIFFLIB = -ltiff
+        TIFFHDR_DIR =
+        TIFFLIB_NEEDS_JPEG = Y
+        TIFFLIB_NEEDS_Z = Y
+        JPEGLIB = -ljpeg
+        JPEGHDR_DIR =
+        PNGLIB = -lpng
+        PNGHDR_DIR =
+        PNGVER =
+        ZLIB = -lz
+        ZHDR_DIR =
+        JBIGLIB = \$(INTERNAL_JBIGLIB)
+        JBIGHDR_DIR = \$(INTERNAL_JBIGHDR_DIR)
+        JASPERLIB = \$(INTERNAL_JASPERLIB)
+        JASPERHDR_DIR = \$(INTERNAL_JASPERHDR_DIR)
+        JASPERDEPLIBS =
+        URTLIB = \$(BUILDDIR)/urt/librle.a
+        URTHDR_DIR = \$(SRCDIR)/urt
+        X11LIB = NONE
+        X11HDR_DIR =
+        LINUXSVGALIB = NONE
+        LINUXSVGAHDR_DIR =
+        WINICON_OBJECT =
+        OMIT_NETWORK =
+        NETWORKLD =
+        DONT_HAVE_PROCESS_MGMT = N
+        PKGDIR_DEFAULT = ${build_dir}
+        RESULTDIR_DEFAULT = ${build_dir}-test
+        PKGMANDIR = man
+        INSTALL_PERM_BIN =  755
+        INSTALL_PERM_LIBD = 755
+        INSTALL_PERM_LIBS = 644
+        INSTALL_PERM_HDR =  644
+        INSTALL_PERM_MAN =  644
+        INSTALL_PERM_DATA = 644
+        SUFFIXMANUALS1 = 1
+        SUFFIXMANUALS3 = 3
+        SUFFIXMANUALS5 = 5
+        NETPBMLIBTYPE = dylib
+        NETPBMLIBSUFFIX = dylib
+        STATICLIB_TOO = Y
+        STATICLIBSUFFIX = a
+        SHLIBPREFIXLIST = lib
+        NETPBMSHLIBPREFIX = \$(firstword \$(SHLIBPREFIXLIST))
+        DLLVER =
+        NETPBM_DOCURL = http://netpbm.sourceforge.net/doc/
+        RGB_DB_PATH = /usr/local/netpbm/rgb.txt:/usr/share/netpbm/rgb.txt
+        " > config.mk
+
+    printf "$print_prepackage2" "$package" "Building" > /dev/tty
+    make
+    make package pkgdir="$build_dir"
+
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+    password_check
+    if [[ -d "$build_dir/bin" ]]; then
+        sudo cp -rP "$build_dir/bin" "$install_prefix/"
+    fi
+    if [[ -d "$build_dir/doc" ]]; then
+        sudo cp -rP "$build_dir/doc" "$install_prefix/"
+    fi
+    if [[ -d "$build_dir/etc" ]]; then
+        sudo cp -rP "$build_dir/etc" "$install_prefix/"
+    fi
+    if [[ -d "$build_dir/include" ]]; then
+        sudo cp -rP "$build_dir/include" "$install_prefix/"
+    fi
+    if [[ -d "$build_dir/lib" ]]; then
+        sudo cp -rP "$build_dir/lib" "$install_prefix/"
+    fi
+    if [[ -d "$build_dir/libexec" ]]; then
+        sudo cp -rP "$build_dir/libexec" "$install_prefix/"
+    fi
+    if [[ -d "$build_dir/man" ]]; then
+        sudo cp -rP "$build_dir/man" "$install_prefix/"
+    fi
+    if [[ -d "$build_dir/misc" ]]; then
+        sudo cp -rP "$build_dir/misc" "$install_prefix/"
+    fi
+    if [[ -d "$build_dir/sbin" ]]; then
+        sudo cp -rP "$build_dir/sbin" "$install_prefix/"
+    fi
+    if [[ -d "$build_dir/share" ]]; then
+        sudo cp -rP "$build_dir/share" "$install_prefix/"
+    fi
+
+    create_pkg_pc   "netpbm" \
+                    "Netpbm" \
+                    "Graphics utilities" \
+                    "" \
+                    "$(cat VERSION)" \
+                    "" \
+                    "" \
+                    "" \
+                    "-I${install_prefix}/include" \
+                    "-L${install_prefix}/lib -lnetpbm" \
+                    "" \
+                    "" \
+                    "${install_prefix}" \
+                    "${install_prefix}"
+}
+
+create_pkg_pc() {
+    local package=$1
+    local package_name=$2
+    local description=${3:=""}
+    local url=${4:=""}
+    local version=${5:="1.0.0"}
+    local requires=${6:=""}
+    local requires_private=${7:=""}
+    local conflicts=${8:=""}
+    local c_flags=${9:=""}
+    local libs=${10:=""}
+    local libs_private=${11:=""}
+    local extension=${12:=""}
+    local prefix_path=${13:=${MACOSX_SDK_PATH}}
+    local exec_prefix_path=${13:=/usr}
+
+    local pc_filename="${install_prefix}/lib/pkgconfig/${package}.pc"
+
+    password_check
+    if [[ ! -f $pc_filename ]]; then
+        sudo tee "$pc_filename" > /dev/null << EOF
+prefix=${prefix_path}/usr
+exec_prefix=${exec_prefix_path}
+bindir=\${exec_prefix}/bin
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include${extension}
+
+Name: ${package_name}
+Description: ${description}
+URL: ${url}
+Version: ${version}
+Requires: ${requires}
+Requires.private: ${requires_private}
+Conflicts: ${conflicts}
+Cflags: ${c_flags}
+Libs: ${libs}
+Libs.private: ${libs_private}
+EOF
+    fi
+}
+
+install_configure() {
+    local package=$1
+    local param_1=$2
+    local param_2=$3
+    local build_in_source=${4:="no"}
+    local configure_command=${5:=configure}
+    local configure_command_options=${6:=--prefix=$install_prefix}
+    local automake_script=${7:="no"}
+    local source_dir_addon=${8:=""}
+    local custom_patch=${9:=""}
+
+    printf "  =====  $package =====  \n"  | tee /dev/stderr
+    if not_stamp_timeout "$package"; then
+        printf "$print_prepackage4" "$package" "Skipping" > /dev/tty
+        return 0
+    fi
+    printf "$print_prepackage1" "$package" "Manifesting" > /dev/tty
+    pre_install_manifest "$package"
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+
+    if [[ $source_dir_addon != "" ]]; then
+        local source_dir="$SWD/sources/${package}/${source_dir_addon}"
+    else
+        local source_dir="$SWD/sources/${package}"
+    fi
+
+    if [[ $param_2 == "svn" ]]; then
+        download_svn "$package" "$param_1" "$param_2" "$source_dir"
+    elif is_url "$param_1"; then
+        download_git "$package" "$param_1" "$param_2" "$source_dir"
+    elif is_url "$param_2"; then
+        download_https "$package" "$param_1" "$param_2" "$source_dir"
+    else
+        echo "Incorrect parameters"
+        echo "$param_1"
+        echo "$param_2"
+    fi
+
+    if [[ "$automake_script" != "no" ]]; then
+        printf "$print_prepackage2" "$package" "Preprocessing" > /dev/tty
+        cd "$source_dir"
+        sh "$automake_script"
+    fi
+
+    if [[ $custom_patch == "libtool_patch" ]]; then
+        # for node.js
+        printf "$print_prepackage2" "$package" "Patching" > /dev/tty
+        sed -i '' "s| libtool | /usr/bin/libtool |g" "$source_dir/tools/gyp/pylib/gyp/generator/make.py"
+    fi
+
+    if [[ $custom_patch == "gts_patch" ]]; then
+        printf "$print_prepackage2" "$package" "Patching" > /dev/tty
+        # sed -i '' "s| #include <pgm.h> | #include <netpbm/pgm.h> |g" "$source_dir/examples/happrox.c"
+    fi
+
+    if [[ $package == "lame" ]]; then
+        printf "$print_prepackage2" "$package" "Patching" > /dev/tty
+        cd "$source_dir"
+        sed -i '' "/lame_init_old/d" include/libmp3lame.sym
+        curl -sOL https://tmkk.undo.jp/lame/lame-3.100-neon-20230418.diff
+        patch -ruN -d . < lame-3.100-neon-20230418.diff
+    fi
+
+    if [[ $package == "netpbm" ]]; then
+        # too many custom options
+        using_configure_netpbm "$package" "$source_dir" "$configure_command" "$configure_command_options"
+    elif [[ "$build_in_source" == "yes" ]]; then
+        using_configure_in_source "$package" "$source_dir" "$configure_command" "$configure_command_options"
+    else
+        using_configure_build_dir "$package" "$source_dir" "$configure_command" "$configure_command_options"
+    fi
+
+    set_timeout_stamp "$package"
+    post_install_manifest "$package"
+    printf "$print_prepackage3" "$package" "Completed" > /dev/tty
+}
+
+install_make() {
+    local package=$1
+    local param_1=$2
+    local param_2=$3
+    local source_dir_addon=${4:=""}
+
+    printf "  =====  $package =====  \n"  | tee /dev/stderr
+    if not_stamp_timeout "$package"; then
+        printf "$print_prepackage4" "$package" "Skipping" > /dev/tty
+        return 0
+    fi
+    printf "$print_prepackage1" "$package" "Manifesting" > /dev/tty
+    pre_install_manifest "$package"
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+
+    if [[ $source_dir_addon != "" ]]; then
+        local source_dir="$SWD/sources/${package}/${source_dir_addon}"
+    else
+        local source_dir="$SWD/sources/${package}"
+    fi
+
+    if is_url "$param_1"; then
+        download_git "$package" "$param_1" "$param_2" "$source_dir"
+    elif is_url "$param_2"; then
+        download_https "$package" "$param_1" "$param_2" "$source_dir"
+    else
+        echo "Incorrect parameters"
+    fi
+
+    cd "$source_dir"
+
+    if [[ -f "Makefile" ]]; then
+        printf "$print_prepackage2" "$package" "Cleaning" > /dev/tty
+        if target_exists "distclean"; then
+            make distclean
+        elif target_exists "clean"; then
+            make clean
+        else
+            echo "Couldn't clean"
+        fi
+    fi
+
+    printf "$print_prepackage2" "$package" "Patching" > /dev/tty
+    sed -i '' "s|/usr/local|${install_prefix}|g" "$source_dir/Makefile"
+
+    if [[ $package == "openh264" ]]; then
+        printf "$print_prepackage2" "$package" "Building" > /dev/tty
+        make ARCH=arm64 -j$c_jobs
+    elif [[ $package == "lua51" ]]; then
+        printf "$print_prepackage2" "$package" "Building" > /dev/tty
+        make macosx -j$c_jobs
+    elif [[ $package == "SwiftLint" ]]; then
+        printf "$print_prepackage2" "$package" "Bazeling" > /dev/tty
+    else
+        printf "$print_prepackage2" "$package" "Building" > /dev/tty
+        make -j$c_jobs
+    fi
+
+
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+    password_check
+    sudo make install -j$c_jobs
+
+    set_timeout_stamp "$package"
+    post_install_manifest "$package"
+    printf "$print_prepackage3" "$package" "Completed" > /dev/tty
+}
+
+install_prebuilt() {
+    local package=$1
+    local param_1=$2
+    local param_2=$3
+    local package_object=${4:="$package"}
+    local source_dir_addon=${5:=""}
+
+    printf "  =====  $package =====  \n"  | tee /dev/stderr
+    if not_stamp_timeout "$package"; then
+        printf "$print_prepackage4" "$package" "Skipping" > /dev/tty
+        return 0
+    fi
+    printf "$print_prepackage1" "$package" "Manifesting" > /dev/tty
+    pre_install_manifest "$package"
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+
+    if [[ $source_dir_addon != "" ]]; then
+        local source_dir="$SWD/sources/${package}/${source_dir_addon}"
+    else
+        local source_dir="$SWD/sources/${package}"
+    fi
+
+    if is_url "$param_1"; then
+        download_git "$package" "$param_1" "$param_2" "$source_dir"
+    elif is_url "$param_2"; then
+        download_https "$package" "$param_1" "$param_2" "$source_dir"
+    else
+        echo "Incorrect parameters"
+    fi
+
+    local package_install="$SWD/sources/${package_object}"
+
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+
+    password_check
+    if [[ $package == "rust-beta" ]]; then
+        sudo "${source_dir}/install.sh" --prefix=$install_prefix
+    elif [[ -f "$package_install" ]]; then
+        sudo cp "$package_install" "$install_prefix/bin/$package"
+        sudo chmod +x "$install_prefix/bin/$package"
+    elif [[ -d "$package_install" ]]; then
+        if [[ -d "$package_install/bin" ]]; then
+            sudo cp -rP "$package_install/bin" "$install_prefix/"
+        fi
+        if [[ -d "$package_install/doc" ]]; then
+            sudo cp -rP "$package_install/doc" "$install_prefix/"
+        fi
+        if [[ -d "$package_install/etc" ]]; then
+            sudo cp -rP "$package_install/etc" "$install_prefix/"
+        fi
+        if [[ -d "$package_install/include" ]]; then
+            sudo cp -rP "$package_install/include" "$install_prefix/"
+        fi
+        if [[ -d "$package_install/lib" ]]; then
+            sudo cp -rP "$package_install/lib" "$install_prefix/"
+        fi
+        if [[ -d "$package_install/libexec" ]]; then
+            sudo cp -rP "$package_install/libexec" "$install_prefix/"
+        fi
+        if [[ -d "$package_install/man" ]]; then
+            sudo cp -rP "$package_install/man" "$install_prefix/"
+        fi
+        if [[ -d "$package_install/sbin" ]]; then
+            sudo cp -rP "$package_install/sbin" "$install_prefix/"
+        fi
+        if [[ -d "$package_install/share" ]]; then
+            sudo cp -rP "$package_install/share" "$install_prefix/"
+        fi
+    else
+        echo "Neither file or directory exists at package_install"
+    fi
+
+    set_timeout_stamp "$package"
+    post_install_manifest "$package"
+    printf "$print_prepackage3" "$package" "Completed" > /dev/tty
+}
+
+install_cmake() {
+    local package=$1
+    local param_1=$2
+    local param_2=$3
+    local cmake_options=${4:=""}
+    local source_dir_addon=${5:=""}
+
+    printf "  =====  $package =====  \n"  | tee /dev/stderr
+    if not_stamp_timeout "$package"; then
+        printf "$print_prepackage4" "$package" "Skipping" > /dev/tty
+        return 0
+    fi
+    printf "$print_prepackage1" "$package" "Manifesting" > /dev/tty
+    pre_install_manifest "$package"
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+
+    if [[ $source_dir_addon != "" ]]; then
+        local source_dir="$SWD/sources/${package}/${source_dir_addon}"
+    else
+        local source_dir="$SWD/sources/${package}"
+    fi
+
+    local build_dir="$SWD/builds/$package"
+
+    if is_url "$param_1"; then
+        download_git "$package" "$param_1" "$param_2" "$source_dir"
+    elif is_url "$param_2"; then
+        download_https "$package" "$param_1" "$param_2" "$source_dir"
+    else
+        echo "Incorrect parameters"
+    fi
+
+    mkdir -p "$build_dir"
+    cd "$build_dir"
+
+    # fix for neovim dependecy building, makes it easier for me, in future add
+    # luv, lpeg, luajit, tree-sitter, unibilium
+    printf "$print_prepackage2" "$package" "Dependencies" > /dev/tty
+    if [[ $package == "neovim" ]]; then
+        mkdir -p "$build_dir/.deps"
+        cd "$build_dir/.deps"
+        eval "
+        cmake -DCMAKE_INSTALL_PREFIX=$install_prefix \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS=\"$CFLAGS\" \
+            -DCMAKE_EXE_LINKER_FLAGS=\"$LDFLAGS\" \
+            -DCMAKE_INSTALL_RPATH=\"$install_prefix/lib\" \
+            -Wno-dev \
+            \"$source_dir/cmake.deps\" \
+            "
+        printf "$print_prepackage2" "$package" "Building" > /dev/tty
+        cmake --build . --parallel=$c_jobs
+        printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+        password_check
+        sudo cp -rP $build_dir/.deps/usr/{bin,include,lib,share} "$install_prefix"
+        cd "$build_dir"
+    fi
+
+    printf "$print_prepackage2" "$package" "Configuring" > /dev/tty
+    eval "
+    cmake -DCMAKE_INSTALL_PREFIX=$install_prefix \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_FLAGS=\"$CFLAGS\" \
+        -DCMAKE_EXE_LINKER_FLAGS=\"$LDFLAGS\" \
+        -DCMAKE_SKIP_BUILD_RPATH=FALSE \
+        -DCMAKE_BUILD_WITH_INSTALL_RPATH=FALSE \
+        -DCMAKE_MACOSX_RPATH=TRUE \
+        -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE \
+        -DCMAKE_INSTALL_RPATH=\"$install_prefix/lib\" \
+        $cmake_options \
+        -Wno-dev \
+        \"$source_dir\"
+        "
+
+    printf "$print_prepackage2" "$package" "Building" > /dev/tty
+    cmake --build . --parallel=$c_jobs
+
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+    password_check
+    sudo cmake --install .
+
+    set_timeout_stamp "$package"
+    post_install_manifest "$package"
+    printf "$print_prepackage3" "$package" "Completed" > /dev/tty
+}
+
+install_meson() {
+    local package=$1
+    local param_1=$2
+    local param_2=$3
+    local meson_options=${4:=""}
+
+    local source_dir_addon=${5:=""}
+
+    printf "  =====  $package =====  \n"  | tee /dev/stderr
+    if not_stamp_timeout "$package"; then
+        printf "$print_prepackage4" "$package" "Skipping" > /dev/tty
+        return 0
+    fi
+    printf "$print_prepackage1" "$package" "Manifesting" > /dev/tty
+    pre_install_manifest "$package"
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+
+    if [[ $source_dir_addon != "" ]]; then
+        local source_dir="$SWD/sources/${package}/${source_dir_addon}"
+    else
+        local source_dir="$SWD/sources/${package}"
+    fi
+
+    local build_dir="$SWD/builds/$package"
+
+    if is_url "$param_1"; then
+        download_git "$package" "$param_1" "$param_2" "$source_dir"
+    elif is_url "$param_2"; then
+        download_https "$package" "$param_1" "$param_2" "$source_dir"
+    else
+        echo "Incorrect parameters"
+    fi
+
+    mkdir -p "$build_dir"
+    cd "$source_dir"
+
+    printf "$print_prepackage2" "$package" "Setup" > /dev/tty
+    eval "
+    meson setup --prefix=$install_prefix \"$build_dir\" \
+                $meson_options \
+                -Dc_args=\"$CFLAGS\" \
+                -Dc_link_args=\"$LDFLAGS\"
+                "
+
+    printf "$print_prepackage2" "$package" "Compiling" > /dev/tty
+    meson compile -C "$build_dir"
+
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+    password_check
+    sudo meson install -C "$build_dir"
+
+    if [[ $package == "pkgconf" ]]; then
+        # pkg recipes for macos builtin libraries, based on brew
+        create_pkg_pc "bzip2" "bzip2" "Freely available, patent free, high-quality data compressor" "" "1.0.6" "" "" "" "" "-L\${libdir} -lbz2" "" ""
+        create_pkg_pc "expat" "expat" "Stream-oriented XML parser" "" "2.2.8" "" "" "" "" "-L\${libdir} -lexpat" "" ""
+        create_pkg_pc "libcurl" "libcurl" "Free and easy-to-use client-side URL transfer library" "" "7.64.1" "" "" "" "" "-L\${libdir} -lcurl" "-lldap -lz" ""
+        create_pkg_pc "libedit" "libedit" "Command line editor library" "" "3.0.0" "" "" "" "-I\${includedir}/editline" "-L\${libdir} -ledit" "" ""
+        create_pkg_pc "libexslt" "libedit" "Community initiative to provide extensions to XSLT" "" "0.8.17" "libxml-2.0" "" "" "" "-L\${libdir} -lexslt -lxslt  -lxml2 -lz -lpthread -licucore -lm" "" ""
+        create_pkg_pc "libffi" "libffi" "Library supporting Foreign Function Interfaces" "" "3.3.0" "" "" "" "" "-L\${libdir} -lffi" "" "ffi"
+        create_pkg_pc "libxml-2.0" "libXML" "XML toolkit version 2" "" "2.9.4" "" "" "" "" "-L\${libdir} -lxml2" "-lz -lpthread -licucore -lm" ""
+        create_pkg_pc "libxslt" "libxslt" "XSLT processor based on libxml2" "" "1.1.29" "libxml-2.0" "" "" "" "-L\${libdir} -lxslt -lxml2 -lz -lpthread -licucore -lm" "" ""
+        create_pkg_pc "ncurses" "ncurses" "Free software emulation of curses" "" "5.7.20081102" "" "" "" "" "-L\${libdir} -lncurses" "" ""
+        create_pkg_pc "ncursesw" "ncursesw" "Free software emulation of curses" "" "5.7.20081102" "" "" "" "" "-L\${libdir} -lncurses" "" ""
+        create_pkg_pc "sqlite3" "SQLite3" "Library that implements a SQL database engine" "" "3.28.0" "" "" "" "" "-L\${libdir} -lsqlite3" "" ""
+        create_pkg_pc "uuid" "uuid" "Universally Unique Identifier Library" "" "1.0.0" "" "" "" "-I\${includedir}" "" "" ""
+        create_pkg_pc "zlib" "zlib" "Compression library" "" "1.2.11" "" "" "" "" "-L\${libdir} -lz" "" ""
+    fi
+
+
+    set_timeout_stamp "$package"
+    post_install_manifest "$package"
+    printf "$print_prepackage3" "$package" "Completed" > /dev/tty
+}
+
+install_rust_cargo() {
+    local package=$1
+    local param_1=$2
+    local param_2=$3
+    local cargo_options=${4:=""}
+    local source_dir_addon=${5:=""}
+
+    printf "  =====  $package =====  \n"  | tee /dev/stderr
+    if not_stamp_timeout "$package"; then
+        printf "$print_prepackage4" "$package" "Skipping" > /dev/tty
+        return 0
+    fi
+    printf "$print_prepackage1" "$package" "Manifesting" > /dev/tty
+    pre_install_manifest "$package"
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+
+    if [[ $source_dir_addon != "" ]]; then
+        local source_dir="$SWD/sources/${package}/${source_dir_addon}"
+    else
+        local source_dir="$SWD/sources/${package}"
+    fi
+
+    local build_dir="$SWD/builds/$package"
+
+    if is_url "$param_1"; then
+        download_git "$package" "$param_1" "$param_2" "$source_dir"
+    elif is_url "$param_2"; then
+        download_https "$package" "$param_1" "$param_2" "$source_dir"
+    else
+        echo "Incorrect parameters"
+    fi
+
+    mkdir -p "$build_dir"
+    cd "$source_dir"
+
+    printf "$print_prepackage2" "$package" "Building" > /dev/tty
+    cargo build --release --manifest-path "$source_dir/Cargo.toml"
+
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+    password_check
+    sudo cargo install --path "$source_dir" --root $install_prefix
+
+    set_timeout_stamp "$package"
+    post_install_manifest "$package"
+    printf "$print_prepackage3" "$package" "Completed" > /dev/tty
+}
+
+install_swift() {
+    local package=$1
+    local param_1=$2
+    local param_2=$3
+    local swift_options=${4:=""}
+    local source_dir_addon=${5:=""}
+
+    printf "  =====  $package =====  \n"  | tee /dev/stderr
+    if not_stamp_timeout "$package"; then
+        printf "$print_prepackage4" "$package" "Skipping" > /dev/tty
+        return 0
+    fi
+    printf "$print_prepackage1" "$package" "Manifesting" > /dev/tty
+    pre_install_manifest "$package"
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+
+    if [[ $source_dir_addon != "" ]]; then
+        local source_dir="$SWD/sources/${package}/${source_dir_addon}"
+    else
+        local source_dir="$SWD/sources/${package}"
+    fi
+
+    if is_url "$param_1"; then
+        download_git "$package" "$param_1" "$param_2" "$source_dir"
+    elif is_url "$param_2"; then
+        download_https "$package" "$param_1" "$param_2" "$source_dir"
+    else
+        echo "Incorrect parameters"
+    fi
+
+    cd "$source_dir"
+
+    printf "$print_prepackage2" "$package" "Building" > /dev/tty
+    swift build --disable-sandbox --configuration release --product "$package"
+
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+    password_check
+    sudo install -m 755 ".build/release/$package" "$install_prefix/bin/$package"
+
+    set_timeout_stamp "$package"
+    post_install_manifest "$package"
+    printf "$print_prepackage3" "$package" "Completed" > /dev/tty
+}
+
+install_scons() {
+    local package=$1
+    local param_1=$2
+    local param_2=$3
+    local scons_options=${4:=""}
+    local source_dir_addon=${5:=""}
+
+    printf "  =====  $package =====  \n"  | tee /dev/stderr
+    if not_stamp_timeout "$package"; then
+        printf "$print_prepackage4" "$package" "Skipping" > /dev/tty
+        return 0
+    fi
+    printf "$print_prepackage1" "$package" "Manifesting" > /dev/tty
+    pre_install_manifest "$package"
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+
+    if [[ $source_dir_addon != "" ]]; then
+        local source_dir="$SWD/sources/${package}/${source_dir_addon}"
+    else
+        local source_dir="$SWD/sources/${package}"
+    fi
+
+    if is_url "$param_1"; then
+        download_git "$package" "$param_1" "$param_2" "$source_dir"
+    elif is_url "$param_2"; then
+        download_https "$package" "$param_1" "$param_2" "$source_dir"
+    else
+        echo "Incorrect parameters"
+    fi
+
+    cd "$source_dir"
+
+    printf "$print_prepackage2" "$package" "Building" > /dev/tty
+    eval "scons $scons_options"
+
+    printf "$print_prepackage2" "$package" "Installing" > /dev/tty
+    password_check
+    sudo scons install
+
+    set_timeout_stamp "$package"
+    post_install_manifest "$package"
+    printf "$print_prepackage3" "$package" "Completed" > /dev/tty
+}
+
+# ==============================================================================
+# Update password, sudo has limited time it is caching
+# ==============================================================================
+
+printf "$print_prepackage2" "Script" "Authorizing" > /dev/tty
+sudo -K
+password_check
+printf "$print_prepackage3" "Script" "Authorized" > /dev/tty
+
+# ==============================================================================
+# pip [python][pip]
+# ==============================================================================
+
+install_python_pip "pip"
+
+# ==============================================================================
+# CA Certificates [configure][git]
+# ==============================================================================
+
+printf "$print_prepackage1" "certificates" "Extracting" > /dev/tty
+password_check
+sudo mkdir -p "$install_prefix/share/ca-certificates"
+/usr/bin/security export -k /System/Library/Keychains/SystemRootCertificates.keychain -t certs -p  > "$SWD/root_certs.pem"
+password_check
+sudo cp "$SWD/root_certs.pem" "$install_prefix/share/ca-certificates/root_certs.pem"
+rm "$SWD/root_certs.pem"
+/usr/bin/security find-certificate -a -p > "$SWD/keychain_certs.pem"
+password_check
+sudo cp "$SWD/keychain_certs.pem" "$install_prefix/share/ca-certificates/keychain_certs.pem"
+rm "$SWD/keychain_certs.pem"
+printf "$print_prepackage3" "certificates" "Completed" > /dev/tty
+
+# ==============================================================================
+# OpenSSL [configure][git]
+# ==============================================================================
+
+install_configure   "openssl" \
+                    "https://github.com/openssl/openssl.git" \
+                    "master" \
+                    "no" \
+                    "Configure" \
+                    "--prefix=$install_prefix '-Wl,-rpath,@loader_path/../lib'"
+
+# ==============================================================================
+# sphinx [python][pip]
+# ==============================================================================
+
+install_python_pip "sphinx"
+install_python_pip "sphinx_rtd_theme"
+
+# ==============================================================================
+# cmake [internal][git]
+# ==============================================================================
+
+OLD_CFLAGS="${CFLAGS:=""}"
+CFLAGS=""
+
+install_configure   "CMake" \
+                    "https://github.com/Kitware/CMake.git" \
+                    "master" \
+                    "no" \
+                    "bootstrap" \
+                    " \
+                        --prefix=$install_prefix \
+                        --parallel=8 -- \
+                        -DSPHINX_MAN=ON \
+                        -DBUILD_TESTING:BOOL=OFF \
+                        -DCMAKE_USE_OPENSSL:BOOL=ON \
+                        -DCMAKE_BUILD_TYPE:STRING=Release \
+                        -Wno-dev \
+                    "
+
+CFLAGS="$OLD_CFLAGS"
+
+# ==============================================================================
+# m4 [configure][https]
+# ==============================================================================
+
+install_configure "m4" "m4-latest.tar.xz" "https://ftp.gnu.org/gnu/m4/"
+
+# ==============================================================================
+# autoconf [configure][https]
+# ==============================================================================
+
+install_configure "autoconf" "autoconf-latest.tar.xz" "https://ftp.gnu.org/gnu/autoconf/"
+
+# ==============================================================================
+# automake [configure][https] [version]
+# ==============================================================================
+
+install_configure "automake" "automake-1.17.tar.xz" "https://ftp.gnu.org/gnu/automake/"
+
+# ==============================================================================
+# bison [configure][https] [version]
+# ==============================================================================
+
+install_configure "bison" "bison-3.8.2.tar.xz" "https://ftp.gnu.org/gnu/bison/"
+
+# ==============================================================================
+# re2c [cmake][git]
+# ==============================================================================
+
+install_cmake "re2c" "https://github.com/skvadrik/re2c.git" "master"
+
+# ==============================================================================
+# Ninja [cmake][git]
+# ==============================================================================
+
+install_cmake "ninja" "https://github.com/ninja-build/ninja.git" "release"
+
+# ==============================================================================
+# lua [make][https] [version]
+# ==============================================================================
+
+install_make "lua" "lua-5.4.7.tar.gz" "https://www.lua.org/ftp/"
+
+# ==============================================================================
+# lua51 [configure][https] [version]
+# ==============================================================================
+
+OLD_install_prefix="$install_prefix"
+install_prefix="$install_prefix/lua51"
+
+install_make "lua51" "lua-5.1.5.tar.gz" "https://www.lua.org/ftp/"
+
+install_prefix="$OLD_install_prefix"
+
+# ==============================================================================
+# luarocks [configure][https] [version] not out of source tree
+# ==============================================================================
+
+install_configure "luarocks" "luarocks-3.11.1.tar.gz" "https://luarocks.org/releases/" "yes"
+
+# ==============================================================================
+# luajit [configure][git]
+# ==============================================================================
+
+install_make "luajit" "https://luajit.org/git/luajit.git" "v2.1"
+
+# ==============================================================================
+# Meson [python][pip]
+# ==============================================================================
+
+install_python_pip "meson"
+
+# ==============================================================================
+# Docutils [python][pip]
+# ==============================================================================
+
+install_python_pip "docutils"
+
+# ==============================================================================
+# Tomli [python][pip]
+# ==============================================================================
+
+install_python_pip "tomli"
+
+# ==============================================================================
+# Mako [python][pip]
+# ==============================================================================
+
+install_python_pip "mako"
+
+# ==============================================================================
+# Pyparsing [python][pip]
+# ==============================================================================
+
+install_python_pip "pyparsing"
+
+# ==============================================================================
+# PyYAML [python][pip]
+# ==============================================================================
+
+install_python_pip "PyYAML"
+
+# ==============================================================================
+# pkgconf [meson][git]
+# ==============================================================================
+
+install_meson "pkgconf" "https://github.com/pkgconf/pkgconf.git" "master" "-Dtests=disabled"
+password_check
+sudo ln -sf $install_prefix/bin/pkgconf $install_prefix/bin/pkg-config
+
+# ==============================================================================
+# setuptools [python][pip]
+# ==============================================================================
+
+install_python_pip "setuptools"
+
+# ==============================================================================
+# markdown [python][pip]
+# ==============================================================================
+
+install_python_pip "markdown"
+
+# ==============================================================================
+# anytree [python][pip]
+# ==============================================================================
+
+install_python_pip "anytree"
+
+# ==============================================================================
+# lxml [python][pip]
+# ==============================================================================
+
+install_python_pip "lxml"
+
+# ==============================================================================
+# pygments [python][pip]
+# ==============================================================================
+
+install_python_pip "pygments"
+
+# ==============================================================================
+# rnc2rng [python][pip]
+# ==============================================================================
+
+install_python_pip "rnc2rng"
+
+# ==============================================================================
+# pypackaging [python][pip]
+# ==============================================================================
+
+install_python_pip "pypackaging"
+
+# ==============================================================================
+# zlib [configure][https] should use system provided
+# ==============================================================================
+
+install_configure "zlib" "zlib.tar.gz" "https://zlib.net/current/"
+
+# ==============================================================================
+# brotli [cmake][git]
+# ==============================================================================
+
+install_cmake "brotli" "https://github.com/google/brotli.git" "master"
+
+# ==============================================================================
+# libtool [configure][https] [version]
+# ==============================================================================
+
+install_configure "libtool" "libtool-2.5.4.tar.xz" "https://ftp.gnu.org/gnu/libtool/"
+
+# ==============================================================================
+# libiconv [configure][https] [version]
+# ==============================================================================
+
+install_configure "libiconv" "libiconv-1.18.tar.gz" "https://ftp.gnu.org/pub/gnu/libiconv/"
+
+# ==============================================================================
+# doxygen [cmake][git]
+# ==============================================================================
+
+OLD_LDFLAGS="${LDFLAGS:=""}"
+LDFLAGS="$LDFLAGS -liconv"
+
+install_cmake "doxygen" "https://github.com/doxygen/doxygen.git" "master"
+
+LDFLAGS="$OLD_LDFLAGS"
+
+# ==============================================================================
+# groff [configure][https] [version]
+# ==============================================================================
+
+install_configure "groff" "groff-1.23.0.tar.gz" "https://ftp.gnu.org/gnu/groff/" "no" "configure" "--without-x"
+
+# ==============================================================================
+# pixman [meson][git]
+# ==============================================================================
+
+install_meson "pixman" "https://gitlab.freedesktop.org/pixman/pixman.git" "master"
+
+# ==============================================================================
+# cairo [meson][git]
+# ==============================================================================
+
+install_meson "cairo" "https://gitlab.freedesktop.org/cairo/cairo.git" "master"
+
+# ==============================================================================
+# icu [configure][https]
+# ==============================================================================
+
+install_configure   "icu" \
+                    "https://github.com/unicode-org/icu.git" \
+                    "main" \
+                    "no" \
+                    "runConfigureICU" \
+                    "macOS --prefix=$install_prefix --enable-rpath --disable-renaming --disable-samples --disable-tests" \
+                    "no" \
+                    "icu4c/source"
+
+# ==============================================================================
+# libunistring [configure][https]
+# ==============================================================================
+
+install_configure "libunistring" "libunistring-latest.tar.xz" "https://ftp.gnu.org/gnu/libunistring/"
+
+# ==============================================================================
+# gettext [configure][https] [version]
+# ==============================================================================
+
+OLD_LDFLAGS="$LDFLAGS"
+LDFLAGS=""
+
+install_configure   "gettext" \
+                    "gettext-0.23.1.tar.xz" \
+                    "https://ftp.gnu.org/gnu/gettext/" \
+                    "no" \
+                    "configure" \
+                    "--prefix=$install_prefix --with-emacs"
+
+LDFLAGS="$OLD_LDFLAGS"
+
+# ==============================================================================
+# PCRE2 [cmake][git]
+# ==============================================================================
+
+install_cmake "pcre2" "https://github.com/PCRE2Project/pcre2.git" "master"
+
+# ==============================================================================
+# gtk-doc [cmake][git]
+# ==============================================================================
+
+install_meson "gtk-doc" "https://gitlab.gnome.org/GNOME/gtk-doc.git" "master" "-Dtests=false -Dyelp_manual=false"
+
+# ==============================================================================
+# glib [meson][git]
+# ==============================================================================
+
+install_meson   "glib" \
+                "https://gitlab.gnome.org/GNOME/glib.git" \
+                "main" \
+                "-Dselinux=disabled -Ddtrace=disabled -Dsystemtap=disabled -Dbsymbolic_functions=false -Dintrospection=disabled -Dtests=false"
+
+# ==============================================================================
+# apr [configure][https] [version]
+# ==============================================================================
+
+install_configure "apr" "apr-1.7.5.tar.bz2" "https://dlcdn.apache.org/apr/"
+
+# ==============================================================================
+# apr-util [configure][https] [version]
+# ==============================================================================
+
+install_configure "apr-util" "apr-util-1.6.3.tar.bz2" "https://dlcdn.apache.org/apr/" "no" "configure" "--prefix=$install_prefix --with-apr=$install_prefix"
+
+# ==============================================================================
+# scons [python][pip]
+# ==============================================================================
+
+install_python_pip "scons"
+
+# ==============================================================================
+# serf [scons][https] [version]
+# ==============================================================================
+
+install_scons   "serf" \
+                "serf-1.3.10.tar.bz2" \
+                "https://dlcdn.apache.org/serf/" \
+                " \
+                    PREFIX=\"$install_prefix\" \
+                    OPENSSL=\"$install_prefix\" \
+                    APR=\"$install_prefix\" \
+                    APU=\"$install_prefix\" \
+                    CFLAGS=\"$CFLAGS\"
+                    LINKFLAGS=\"$LDFLAGS\"
+                "
+
+# ==============================================================================
+# svn [configure][https] [version]
+# ==============================================================================
+
+install_configure   "svn" \
+                    "subversion-1.14.5.tar.bz2" \
+                    "https://dlcdn.apache.org/subversion/" \
+                    "no" \
+                    "configure" \
+                    " \
+                        --prefix=\"$install_prefix\" \
+                        --with-lz4=internal \
+                        --with-ssl \
+                        --enable-optimize \
+                        --disable-mod-activation \
+                        --disable-plaintext-password-storage \
+                        --disable-debug \
+                    "
+
+# ==============================================================================
+# netpbm [configure][svn]
+# ==============================================================================
+
+install_configure   "netpbm" \
+                    "svn://svn.code.sf.net/p/netpbm/code/trunk" \
+                    "svn" \
+                    "no" \
+                    "configure" \
+                    " "
+
+if [[ ! -f /usr/local/lib/libnetpbm.dylib ]]; then
+    password_check
+    sudo ln -s /usr/local/lib/libnetpbm.11.dylib /usr/local/lib/libnetpbm.dylib
+fi
+
+# ==============================================================================
+# gts [configure][https]
+# ==============================================================================
+
+install_configure   "gts" \
+                    "gts-snapshot-121130.tar.gz" \
+                    "https://gts.sourceforge.net/tarballs/" \
+                    "yes" \
+                    "configure" \
+                    "--prefix=\"$install_prefix\"" \
+                    "no" \
+                    "" \
+                    "gts_patch"
+
+# ==============================================================================
+# GObject Introspection [meson][git]
+# ==============================================================================
+
+# install_meson "gobject-introspection" "gobject-introspection-1.82.0.tar.xz" "https://download.gnome.org/sources/gobject-introspection/1.82/"
+# install_meson "gobject-introspection" "https://gitlab.gnome.org/GNOME/gobject-introspection.git" "main"
+
+# ==============================================================================
+# libevent [cmake][git]
+# ==============================================================================
+
+install_cmake "libevent" "https://github.com/libevent/libevent.git" "master"
+
+# ==============================================================================
+# utf8proc [cmake][git]
+# ==============================================================================
+
+install_cmake "utf8proc" "https://github.com/JuliaStrings/utf8proc.git" "master"
+
+# ==============================================================================
+# nghttp2 [cmake][git]
+# ==============================================================================
+
+install_cmake "nghttp2" "https://github.com/nghttp2/nghttp2.git" "master"
+
+# ==============================================================================
+# tmux [automake][git]
+# ==============================================================================
+
+install_configure   "tmux" \
+                    "https://github.com/tmux/tmux.git"\
+                    "master" \
+                    "no" \
+                    "configure" \
+                    "--prefix=$install_prefix --enable-utf8proc" \
+                    "autogen.sh"
+
+# ==============================================================================
+# gmp [configure][https] [version]
+# ==============================================================================
+
+OLD_LDFLAGS="$LDFLAGS"
+LDFLAGS=""
+
+install_configure "gmp" "gmp-6.3.0.tar.xz" "https://gmplib.org/download/gmp/"
+
+LDFLAGS="$OLD_LDFLAGS"
+
+# ==============================================================================
+# nettle [configure][https] [version]
+# ==============================================================================
+
+install_configure "nettle" "nettle-3.10.tar.gz" "https://ftp.gnu.org/gnu/nettle/"
+
+# ==============================================================================
+# libexpat [automake][git] soon cmake, macos use system provided
+# ==============================================================================
+
+install_configure   "libexpat" \
+                    "https://github.com/libexpat/libexpat.git"\
+                    "master" \
+                    "no" \
+                    "configure" \
+                    "--prefix=$install_prefix" \
+                    "buildconf.sh" \
+                    "expat"
+
+
+# ==============================================================================
+# Unbound [configure][git]
+# ==============================================================================
+
+install_configure   "unbound" \
+                    "https://github.com/NLnetLabs/unbound.git" \
+                    "master" \
+                    "no" \
+                    "configure" \
+                    "--prefix=$install_prefix --with-libevent"
+
+# ==============================================================================
+# libIDN2 [configure][https]
+# ==============================================================================
+
+OLD_LDFLAGS="$LDFLAGS"
+LDFLAGS=""
+
+install_configure "libidn2" "libidn2-latest.tar.gz" "https://ftp.gnu.org/gnu/libidn/"
+
+LDFLAGS="$OLD_LDFLAGS"
+
+# ==============================================================================
+# texinfo [configure][https]
+# ==============================================================================
+
+install_configure "texinfo" "texinfo-7.2.tar.xz" "https://ftp.gnu.org/gnu/texinfo/"
+
+# ==============================================================================
+# libffi [automake][git]
+# ==============================================================================
+
+install_configure   "libffi" \
+                    "https://github.com/libffi/libffi.git"\
+                    "master" \
+                    "no" \
+                    "configure" \
+                    "--prefix=$install_prefix" \
+                    "autogen.sh"
+
+# ==============================================================================
+# p11-kit [meson][git]
+# ==============================================================================
+
+install_meson "p11-kit" "https://github.com/p11-glue/p11-kit.git" "master"
+
+# ==============================================================================
+# libuv [cmake][git]
+# ==============================================================================
+
+install_cmake "libuv" "https://github.com/libuv/libuv.git" "v1.x"
+add_rpath_if_missing "$install_prefix/lib/libuv.1.0.0.dylib" "$install_prefix/lib"
+
+# ==============================================================================
+# c-ares [cmake][git]
+# ==============================================================================
+
+install_cmake "c-ares" "https://github.com/c-ares/c-ares.git" "main" "-DCARES_SHARED=ON -DCMAKE_INSTALL_RPATH=$install_prefix/lib"
+
+# ==============================================================================
+# Node.js [configure][git]
+# ==============================================================================
+
+install_prebuilt "node" "node-v23.5.0-darwin-arm64.tar.xz" "https://nodejs.org/download/release/v23.5.0/"
+password_check
+sudo rm $install_prefix/bin/corepack $install_prefix/bin/npm $install_prefix/bin/npx
+sudo ln -s $install_prefix/lib/node_modules/corepack/dist/corepack.js $install_prefix/bin/corepack
+sudo ln -s $install_prefix/lib/node_modules/npm/bin/npm-cli.js $install_prefix/bin/npm
+sudo ln -s $install_prefix/lib/node_modules/npm/bin/npx-cli.js $install_prefix/bin/npx
+
+# make expects the original macos libtool not the gnu
+
+# install_configure   "node" \
+#                     "https://github.com/nodejs/node.git" \
+#                     "main" \
+#                     "yes" \
+#                     "configure" \
+#                     " \
+#                         --prefix=$install_prefix \
+#                         --with-intl=system-icu \
+#                         --shared \
+#                         --shared-libuv \
+#                         --shared-openssl \
+#                         --shared-zlib \
+#                         --shared-brotli \
+#                         --shared-cares \
+#                         --openssl-use-def-ca-store \
+#                         --enable-lto \
+#                         --with-icu-source=../../sources/icu/icu4c/source/
+#                     " \
+#                     "no" \
+#                     "" \
+#                     "libtool_patch"
+
+# ==============================================================================
+# luv [cmake][git] [version]
+# ==============================================================================
+
+install_lua_rocks "luv"
+# install_cmake "luv" "https://github.com/luvit/luv.git" "master" ""
+
+# ==============================================================================
+# rust (beta) [internal][https]
+# ==============================================================================
+
+install_prebuilt "rust-beta" "rust-beta-aarch64-apple-darwin.tar.xz" "https://static.rust-lang.org/dist/"
+
+# ==============================================================================
+# tree-sitter-cli [cargo][git]
+# ==============================================================================
+
+install_rust_cargo "tree-sitter-cli" "https://github.com/tree-sitter/tree-sitter.git" "master" "" "cli"
+
+# ==============================================================================
+# neovim [cmake][git]
+# ==============================================================================
+
+OLD_LDFLAGS="$LDFLAGS"
+LDFLAGS="$LDFLAGS -liconv"
+OLD_CFLAGS="$CFLAGS"
+CFLAGS="-I$install_prefix/lua51/include $CFLAGS"
+
+install_cmake "neovim" "https://github.com/neovim/neovim.git" "master"
+
+CFLAGS="$OLD_CFLAGS"
+LDFLAGS="$OLD_LDFLAGS"
+
+# ==============================================================================
+# black [python][pip]
+# ==============================================================================
+
+install_python_pip "black"
+
+# ==============================================================================
+# debugpy [python][pip]
+# ==============================================================================
+
+install_python_pip "debugpy"
+
+# ==============================================================================
+# neovim node.js client [node.js][npm]
+# ==============================================================================
+
+install_node_npm "neovim"
+
+# ==============================================================================
+# pylint [python][pip]
+# ==============================================================================
+
+install_python_pip "pylint"
+
+# ==============================================================================
+# bazel [prebuilt][https] [version]
+# ==============================================================================
+
+install_prebuilt "bazel" "bazel-8.0.0-darwin-arm64" "https://github.com/bazelbuild/bazel/releases/download/8.0.0/" "bazel-8.0.0-darwin-arm64"
+
+# ==============================================================================
+# SwiftLint [make][git]
+# ==============================================================================
+
+install_swift "swiftlint" "https://github.com/realm/SwiftLint.git" "main"
+
+# ==============================================================================
+# gnutls [configure][https] [version]
+# ==============================================================================
+
+OLD_LDFLAGS="$LDFLAGS"
+LDFLAGS="$LDFLAGS"
+
+install_configure   "gnutls" \
+                    "gnutls-3.8.8.tar.xz" \
+                    "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/" \
+                    "no" \
+                    "configure" \
+                    "--prefix=$install_prefix --with-included-libtasn1 --with-included-unistring"
+
+LDFLAGS="$OLD_LDFLAGS"
+
+# ==============================================================================
+# libssh2 [cmake][git]
+# ==============================================================================
+
+install_cmake "libssh2" "https://github.com/libssh2/libssh2.git" "master"
+
+# ==============================================================================
+# freetype [cmake][git]
+# ==============================================================================
+
+install_cmake "freetype" "https://gitlab.freedesktop.org/freetype/freetype.git" "master"
+
+# ==============================================================================
+# fontconfig [meson][git]
+# ==============================================================================
+
+install_meson "fontconfig" "https://gitlab.freedesktop.org/fontconfig/fontconfig.git" "main"
+
+# ==============================================================================
+# jpegsrc [configure][https] [version]
+# ==============================================================================
+
+# install_configure "jpegsrc" "jpegsrc.v9f.tar.gz" "https://www.ijg.org/files/"
+
+# ==============================================================================
+# libjpeg-turbo [cmake][git]
+# ==============================================================================
+
+install_cmake "libjpeg-turbo" "https://github.com/libjpeg-turbo/libjpeg-turbo.git" "main" "-DWITH_JPEG8=TRUE -DFLOATTEST8=fp-contract -DFLOATTEST12=fp-contract"
+
+# ==============================================================================
+# openjpeg [cmake][git]
+# ==============================================================================
+
+install_cmake "openjpeg" "https://github.com/uclouvain/openjpeg.git" "master"
+
+# ==============================================================================
+# libpng [cmake][git]
+# ==============================================================================
+
+install_cmake "libpng" "https://github.com/pnggroup/libpng.git" "master"
+
+# ==============================================================================
+# giflib [configure][https] [version] fix out of tree build
+# ==============================================================================
+
+install_make "giflib" "giflib-5.2.2.tar.gz" "https://downloads.sourceforge.net/project/giflib/"
+
+# ==============================================================================
+# OpenEXR [cmake][git]
+# ==============================================================================
+
+install_cmake "openexr" "https://github.com/AcademySoftwareFoundation/openexr.git" "main"
+
+# ==============================================================================
+# libwebp [cmake][git]
+# ==============================================================================
+
+install_cmake "libwebp" "https://github.com/webmproject/libwebp.git" "main" "-DBUILD_SHARED_LIBS=ON"
+
+# ==============================================================================
+# libtiff [cmake][git]
+# ==============================================================================
+
+install_cmake "libtiff" "https://gitlab.com/libtiff/libtiff.git" "master"
+
+# ==============================================================================
+# gd [cmake][git]
+# ==============================================================================
+
+install_cmake "gd" "https://github.com/libgd/libgd" "master"
+
+# ==============================================================================
+# aom [cmake][git]
+# ==============================================================================
+
+install_cmake "aom" "https://aomedia.googlesource.com/aom" "main" "-DBUILD_SHARED_LIBS=TRUE -DENABLE_TESTDATA=off -DENABLE_TESTS=off"
+
+# ==============================================================================
+# libavif [cmake][git]
+# ==============================================================================
+
+install_cmake "libavif" "https://github.com/AOMediaCodec/libavif.git" "main" "-DAVIF_CODEC_AOM=SYSTEM -DAVIF_BUILD_APPS=ON -DAVIF_LIBYUV=LOCAL"
+
+# ==============================================================================
+# libjxl [cmake][git]
+# ==============================================================================
+
+install_cmake "libjxl" "https://github.com/libjxl/libjxl.git" "main" "-DBUILD_TESTING=OFF"
+
+# ==============================================================================
+# fribidi [meson][git]
+# ==============================================================================
+
+install_meson "fribidi" "https://github.com/fribidi/fribidi.git" "master" "-Ddocs=false"
+
+# ==============================================================================
+# graphite2 [cmake][git]
+# ==============================================================================
+
+install_cmake "graphite2" "https://github.com/silnrsi/graphite.git" "master" ""
+
+# ==============================================================================
+# harfbuzz [meson][git]
+# ==============================================================================
+
+install_meson   "harfbuzz" \
+                "https://github.com/harfbuzz/harfbuzz.git" \
+                "main" \
+                " \
+                    --default-library=both \
+                    -Dintrospection=disabled \
+                    -Dtests=disabled \
+                    -Dcoretext=enabled \
+                    -Dgraphite2=enabled \
+                    -Ddocs=disabled \
+                "
+
+# ==============================================================================
+# pango [meson][git]
+# ==============================================================================
+
+install_meson "pango" "https://gitlab.gnome.org/GNOME/pango.git" "main"
+
+# ==============================================================================
+# graphviz [cmake][git]
+# ==============================================================================
+
+install_cmake "graphviz" "https://gitlab.com/graphviz/graphviz.git" "main" "-DBISON_EXECUTABLE=$install_prefix/bin/bison"
+
+# ==============================================================================
+# libass [meson][git]
+# ==============================================================================
+
+install_meson "libass" "https://github.com/libass/libass.git" "master"
+
+# ==============================================================================
+# libxml2 [meson][git]
+# ==============================================================================
+
+install_meson "libxml2" "https://github.com/GNOME/libxml2.git" "master"
+
+# ==============================================================================
+# libbluray [configure][https] [version]
+# ==============================================================================
+
+install_configure   "libbluray" \
+                    "libbluray-1.3.4.tar.bz2" \
+                    "https://download.videolan.org/videolan/libbluray/1.3.4/" \
+                    "no" \
+                    "configure" \
+                    "--prefix=$install_prefix --with-included-libtasn1 --with-included-unistring"
+
+# ==============================================================================
+# libsndfile [cmake][git]
+# ==============================================================================
+
+install_cmake "libsndfile" "https://github.com/libsndfile/libsndfile.git" "master"
+
+# ==============================================================================
+# libbs2b [configure][https] [version]
+# ==============================================================================
+
+install_configure "libbs2b" "libbs2b-3.1.0.tar.gz" "https://downloads.sourceforge.net/project/bs2b/libbs2b/3.1.0/"
+
+# ==============================================================================
+# dav1d [meson][git]
+# ==============================================================================
+
+install_meson "dav1d" "https://github.com/videolan/dav1d.git" "master"
+
+# ==============================================================================
+# fdk-aac [cmake][git]
+# ==============================================================================
+
+install_cmake "fdk-aac" "https://github.com/mstorsjo/fdk-aac.git" "master"
+
+# ==============================================================================
+# flite [configure][git]
+# ==============================================================================
+
+install_configure "flite" "https://github.com/festvox/flite.git" "master"
+
+# ==============================================================================
+# game-music-emu [cmake][git]
+# ==============================================================================
+
+install_cmake "game-music-emu" "https://github.com/libgme/game-music-emu.git" "master"
+
+# ==============================================================================
+# libmodplug [configure][https] [version]
+# ==============================================================================
+
+install_configure "libmodplug" "libmodplug-0.8.8.5.tar.gz" "https://sourceforge.net/projects/modplug-xmms/files/libmodplug/0.8.8.5/"
+
+# ==============================================================================
+# Mpg123 [configure][https] [version]
+# ==============================================================================
+
+install_configure "mpg123" "mpg123-1.32.9.tar.bz2" "https://sourceforge.net/projects/mpg123/files/mpg123/1.32.9/"
+
+# ==============================================================================
+# lame [configure][https] [version]
+# ==============================================================================
+
+install_configure   "lame" \
+                    "lame-3.100.tar.gz" \
+                    "https://sourceforge.net/projects/lame/files/lame/3.100/" \
+                    "no" \
+                    "configure" \
+                    "--prefix=$install_prefix --disable-debug --enable-nasm"
+
+# ==============================================================================
+# cunit [cmake][git]
+# ==============================================================================
+
+install_cmake "cunit" "https://gitlab.com/cunity/cunit.git" "master"
+
+# ==============================================================================
+# libmysofa [cmake][git]
+# ==============================================================================
+
+install_cmake "libmysofa" "https://github.com/hoene/libmysofa.git" "main"
+
+# ==============================================================================
+# opencore-amr [configure][https] [version]
+# ==============================================================================
+
+install_configure "opencore-amr" "opencore-amr-0.1.6.tar.gz" "https://sourceforge.net/projects/opencore-amr/files/opencore-amr/"
+
+# ==============================================================================
+# openh264 [make][git] fix out of tree build
+# ==============================================================================
+
+install_make "openh264" "https://github.com/cisco/openh264.git" "master"
+
+# ==============================================================================
+# libogg [configure][https] [version]
+# ==============================================================================
+
+install_configure "libogg" "libogg-1.3.5.tar.xz" "https://ftp.osuosl.org/pub/xiph/releases/ogg/"
+
+# ==============================================================================
+# mdcat [cargo][git] * asciidoctor not yet
+# ==============================================================================
+
+install_rust_cargo "mdcat" "https://github.com/swsnr/mdcat.git" "main"
+
+password_check
+if [ -d "/usr/share/fish/vendor_completions.d/" ]; then
+    # sudo mdcat --completions fish > /usr/share/fish/vendor_completions.d/mdcat.fish
+fi
+if [ -d "/usr/share/bash-completion/completions/" ]; then
+    # sudo mdcat --completions bash > /usr/share/bash-completion/completions/mdcat
+fi
+if [ -d "/usr/share/zsh/site-functions/" ]; then
+    # sudo mdcat --completions zsh > /usr/share/zsh/site-functions/_mdcat
+fi
+
+# ==============================================================================
+# eza [cargo][git]
+# ==============================================================================
+
+install_rust_cargo "eza" "https://github.com/eza-community/eza.git" "main"
+
+password_check
+if [ -d "/usr/share/fish/vendor_completions.d/" ]; then
+    # sudo cp $source_dir/completions/eza.fish /usr/share/bash-completion/completions/
+fi
+if [ -d "/usr/share/bash-completion/completions/" ]; then
+    # sudo cp $source_dir/completions/eza /usr/share/bash-completion/completions/
+fi
+if [ -d "/usr/share/zsh/site-functions/" ]; then
+    # sudo cp $source_dir/completions/_eza /usr/share/bash-completion/completions/
+fi
+
+# ==============================================================================
+trap - ERR HUP INT QUIT ILL TRAP ABRT EMT FPE KILL BUS SEGV SYS PIPE ALRM TERM URG STOP TSTP CONT CHLD TTIN TTOU IO XCPU XFSZ VTALRM PROF WINCH INFO USR1 USR2 ZERR
+
+kill $SPINNER_PID 2>/dev/null
+wait $SPINNER_PID 2>/dev/null
+
+printf "$print_prepackage1" "Script" "Post-manifest" > /dev/tty
+post_script_manifest
+printf "$print_prepackage3" "Script" "Completed" > /dev/tty
+
+printf "\033[48;2;35;38;52;38;2;0;0;0m▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇\033[0m\n" > /dev/tty
