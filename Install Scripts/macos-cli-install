@@ -1,13 +1,30 @@
 #!/usr/bin/env zsh
 
-VERSION="1.10"
+VERSION="1.11"
 SKIPTIME="864000"
-SPINNER_INTERVAL=0.2
+SPINNER_INTERVAL=0.4
+SPINNER_PLAIN_INTERVAL=1
 SPINNER_PID=0
 VALID_INSTALL_COMMANDS=("install" "download" "print" "remove" "help")
 
 # Set script start timestamp
 SCRIPT_TIMESTAMP=$(date +%s)
+
+# Colors
+FANCY_COLOR_BEGIN="\033[38;2;35;38;52m\033[38;2;166;209;137;48;2;35;38;52m"
+FANCY_COLOR_END="\033[0m\033[38;2;35;38;52m\033[0m"
+FANCY_COLOR_POST="\033[0m\033[38;2;166;209;137;48;2;35;38;52m"
+FANCY_COLOR_TIME="\033[0m\033[38;2;229;200;144;48;2;35;38;52m"
+FANCY_COLOR_INFO_PRE="\033[38;2;255;255;255;48;2;41;44;60m\033[1m"
+FANCY_COLOR_DONE_PRE="\033[38;2;64;160;43;48;2;41;44;60m\033[1m"
+FANCY_COLOR_WARN_PRE="\033[38;2;229;200;144;48;2;41;44;60m\033[1m"
+FANCY_COLOR_FAIL_PRE="\033[38;2;210;15;57;48;2;41;44;60m\033[1m"
+FANCY_COLOR_SPIN_1="\033[38;2;64;160;43;48;2;35;38;52m"
+FANCY_COLOR_SPIN_2="\033[38;2;48;120;32;48;2;35;38;52m"
+FANCY_COLOR_SPIN_3="\033[38;2;32;80;21;48;2;35;38;52m"
+FANCY_COLOR_SPIN_4="\033[38;2;16;40;10;48;2;35;38;52m"
+FANCY_COLOR_SPIN_5="\033[38;2;0;0;0;48;2;35;38;52m"
+
 
 ################################################################################
 # Script to install common build tools, and cli utilities
@@ -34,6 +51,7 @@ Options:
   --prefix= Install prefix
   --debug   Output information to debug the script
   --speak   Speak package and stages
+  --plain   No fancy text
   --tool=   Use with remove to uninstall only one tool
 $1"
 }
@@ -50,29 +68,37 @@ elapsed_time() {
 }
 
 print_status() {
-    print "[$2]: ($(elapsed_time)) $1 - $3" > /dev/tty
+    local local_time=$(elapsed_time)
     if [[ $DEBUG == ON ]]; then
-        print "[$2]: ($(elapsed_time)) $1 - $3"
+        print "[$2]: ($local_time) $1 - $3"
     fi
-    if [[ $SPEAK == ON ]]; then
-        case $2 in
-            INFO)
-                if
-                say -v Samantha "$1, $3" &
-                ;;
-            WARN)
-                say -v Samantha "Warning: $1, $3" &
-                ;;
-            DONE)
-                say -v Samantha "$1 done." &
-                ;;
-            FAIL)
-                say -v Samantha "Error $3 exception, $1"
-                ;;
-            *)
-                say -v Samantha "Unknown state $2. $1, $3"
-                ;;
-        esac
+    local status_color="$FANCY_COLOR_INFO_PRE"
+    case $2 in
+        INFO)
+            if [[ $SPEAK == ON ]]; then say -v Samantha "$1, $3"; fi
+            status_color="$FANCY_COLOR_INFO_PRE"
+            ;;
+        WARN)
+            if [[ $SPEAK == ON ]]; then say -v Samantha "Warning: $1, $3"; fi
+            status_color="$FANCY_COLOR_WARN_PRE"
+            ;;
+        DONE)
+            if [[ $SPEAK == ON ]]; then say -v Samantha "$1 done."; fi
+            status_color="$FANCY_COLOR_DONE_PRE"
+            ;;
+        FAIL)
+            if [[ $SPEAK == ON ]]; then say -v Samantha "Error $3 exception, $1"; fi
+            status_color="$FANCY_COLOR_FAIL_PRE"
+            ;;
+        *)
+            if [[ $SPEAK == ON ]]; then say -v Samantha "Unknown state $2. $1, $3"; fi
+            status_color="$FANCY_COLOR_FAIL_PRE"
+            ;;
+    esac
+    if [[ $PLAIN_TEXT == ON ]]; then
+        print -n "\n[$2]: ($local_time) $1 - $3 " > /dev/tty
+    else
+        printf "\033[2;5H$FANCY_COLOR_BEGIN %-21s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$1" "$3" > /dev/tty
     fi
 }
 
@@ -82,7 +108,11 @@ sudo_check() {
         if [[ $SPEAK == ON ]]; then
             say -v Samantha "Please enter password for system install"
         fi
+        if [[ $PLAIN_TEXT != ON ]]; then
+            printf "\033[3;1H" > /dev/tty
+        fi
         sudo -v -p "Please enter password for system install: "
+        printf "\033[3;1H%-${COLUMNS}s\033[2;1H\n" " " > /dev/tty
     fi
 }
 
@@ -136,34 +166,51 @@ monitor_activity() {
         if [[ $? ]]; then
             if (( elapsed_time < 1)); then
                 if (( spin == 0 )); then
-                    print -n "  \033[38;2;0;0;0;48;2;35;38;52m▌ \033[38;2;64;160;43;48;2;35;38;52m⏺ \033[48;2;0;0;0;38;2;35;38;52m▌\033[0m\033[7D" > /dev/tty
+                    print -n "\033[2;52H$FANCY_COLOR_SPIN_1 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
                     spin=1
                 else
-                    print -n "  \033[38;2;0;0;0;48;2;35;38;52m▌ \033[38;2;48;120;32;48;2;35;38;52m⏺ \033[48;2;0;0;0;38;2;35;38;52m▌\033[0m\033[7D" > /dev/tty
+                    print -n "\033[2;52H$FANCY_COLOR_SPIN_2 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
                     spin=0
                 fi
             elif (( elapsed_time < 2)); then
-                print -n "  \033[38;2;0;0;0;48;2;35;38;52m▌ \033[38;2;48;120;32;48;2;35;38;52m⏺ \033[48;2;0;0;0;38;2;35;38;52m▌\033[0m\033[7D" > /dev/tty
+                print -n "\033[2;52H$FANCY_COLOR_SPIN_2 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
             elif (( elapsed_time < 3)); then
-                print -n "  \033[38;2;0;0;0;48;2;35;38;52m▌ \033[38;2;32;80;21;48;2;35;38;52m⏺ \033[48;2;0;0;0;38;2;35;38;52m▌\033[0m\033[7D" > /dev/tty
+                print -n "\033[2;52H$FANCY_COLOR_SPIN_3 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
             elif (( elapsed_time < 4)); then
-                print -n "  \033[38;2;0;0;0;48;2;35;38;52m▌ \033[38;2;16;40;10;48;2;35;38;52m⏺ \033[48;2;0;0;0;38;2;35;38;52m▌\033[0m\033[7D" > /dev/tty
+                print -n "\033[2;52H$FANCY_COLOR_SPIN_4 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
             elif (( elapsed_time < 5)); then
-                print -n "  \033[38;2;0;0;0;48;2;35;38;52m▌ \033[38;2;0;0;0;48;2;35;38;52m⏺ \033[48;2;0;0;0;38;2;35;38;52m▌\033[0m\033[7D" > /dev/tty
+                print -n "\033[2;52H$FANCY_COLOR_SPIN_5 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
             else
-                print -n "  \033[38;2;0;0;0;48;2;35;38;52m▌ \033[38;2;0;0;0;48;2;35;38;52m⏺ \033[48;2;0;0;0;38;2;35;38;52m▌\033[0m\033[7D" > /dev/tty
+                print -n "\033[2;52H$FANCY_COLOR_SPIN_5 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
             fi
         else
-            print -n "  \033[38;2;0;0;0;48;2;35;38;52m▌ \033[38;2;0;0;0;48;2;35;38;52m⏺ \033[48;2;0;0;0;38;2;35;38;52m▌\033[0m\033[7D" > /dev/tty
+            print -n "\033[2;52H$FANCY_COLOR_SPIN_5 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
         fi
         sleep $SPINNER_INTERVAL
     done
 }
 
+monitor_activity_plain() {
+    while true; do
+        local elapsed_time=$(check_activity "$1")
+        if [[ $? ]]; then
+            if (( elapsed_time < SPINNER_PLAIN_INTERVAL*2 )); then
+                print -n "*" > /dev/tty
+            fi
+        fi
+        sleep $SPINNER_PLAIN_INTERVAL
+    done
+}
+
 spinner() {
     if [[ $1 == on ]]; then
-        monitor_activity $INSTALL_LOG_OUT &
-        SPINNER_PID=$!
+        if [[ $PLAIN_TEXT == ON ]]; then
+            monitor_activity_plain $INSTALL_LOG_OUT &
+            SPINNER_PID=$!
+        else
+            monitor_activity $INSTALL_LOG_OUT &
+            SPINNER_PID=$!
+        fi
     else
         if (( SPINNER_PID > 0 )); then
             kill "$SPINNER_PID" 2>/dev/null
@@ -180,6 +227,7 @@ setup() {
     INSTALL_SINGLE_TOOL=""
     DEBUG=OFF
     SPEAK=OFF
+    PLAIN_TEXT=OFF
     local positional_args=()
     local unknown_args=()
     for arg in "$@"; do
@@ -204,6 +252,9 @@ setup() {
             --speak)
                 SPEAK=ON
                 ;;
+            --plain)
+                PLAIN_TEXT=ON
+                ;;
             --*)
                 unknown_args+=("$arg")
                 ;;
@@ -220,7 +271,8 @@ setup() {
     SDK_PATH="$(xcrun --show-sdk-path)"
     INSTALL_CERTS_DIRECTORY="$INSTALL_PREFIX/etc/ssl/certs"
     INSTALL_ROOT_CERTS="$INSTALL_CERTS_DIRECTORY/ca-certificates.pem"
-    export PATH="${PATH:-}:${install_prefix}/bin"
+    export PATH="${PATH:-}:${INSTALL_PREFIX}/bin"
+    export SCRIPT_PYTHONPATH=$(dirname $(which python3))
     export MACOSX_DEPLOYMENT_TARGET=15.00
     print -- "Pos $positional_args"
     print -- "Unk $unknown_args"
@@ -233,6 +285,9 @@ setup() {
     mkdir -p "$MANIFEST_DIRECTORY" "$SOURCES_DIRECTORY" "$BUILDS_DIRECTORY" "$LOGS_DIRECTORY"
     INSTALL_LOG_OUT="$LOGS_DIRECTORY/log_out.log"
     INSTALL_LOG_ERR="$LOGS_DIRECTORY/log_err.log"
+    if [[ $PLAIN_TEXT == OFF ]]; then
+        print "\033[2J\033[?25l\n"
+    fi
     exec >"$INSTALL_LOG_OUT" 2>"$INSTALL_LOG_ERR"
     date '+%Y-%m-%d %H:%M:%S'
     trap 'script_trap "$?" "$LINENO" "$0" "$@"' ERR HUP INT QUIT ILL TRAP ABRT EMT FPE KILL BUS SEGV SYS PIPE ALRM TERM URG STOP TSTP CONT CHLD TTIN TTOU IO XCPU XFSZ VTALRM PROF WINCH INFO USR1 USR2 ZERR
@@ -253,6 +308,7 @@ script_trap() {
     if (( except_status > 127 )); then
         signal_identifier="${(e)signals[$(( except_status - 127 ))]}"
     fi
+    print "\033[4;1H\033[?25h\n" > /dev/tty
     # 1 should almost always be the package name
     print_status "${except_arguments[1]}" "FAIL" "$signal_identifier"
     print "Status    : $except_status"
@@ -384,18 +440,18 @@ download() {
         svn)
             download_svn "$1" "$3" "$4" "$5" "$6"
             ;;
-        *)
+        https)
             download_https "$1" "$3" "$4" "$5" "$6"
             ;;
     esac
 }
 
 install_configure() {
-    package=$1
-    configure_builder="$2"
-    tool_options="$3"
-    source_directory="$4"
-    build_directory="$5"
+    local package=$1
+    local configure_builder="$2"
+    local tool_options="$3"
+    local source_directory="$4"
+    local build_directory="$5"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
         if [[ $build_directory != "" ]]; then
@@ -412,13 +468,15 @@ install_configure() {
         elif [[ -f "${source_directory}/bootstrap" ]]; then
             eval "${source_directory}/bootstrap $configure_options"
         else
+            cd "$source_directory"
             eval "${source_directory}/$configure_builder"
+            cd "$build_directory"
             eval "${source_directory}/configure $configure_options"
         fi
         print_status $package "INFO" "Building"
         make -j$CONCURRENT_JOBS
-        print_status $package "INFO" "Installing"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+        print_status $package "INFO" "Installing"
         sudo_check
         sudo make install
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -426,33 +484,49 @@ install_configure() {
     fi
 }
 
+target_exists() {
+    grep -E "^[a-zA-Z0-9_-]+:.*?" "Makefile" | grep -q "^$1:"
+    return $?
+}
+
 install_make_only() {
-    package=$1
-    tool_options="$2"
-    source_directory="$3"
+    local package="$1"
+    local custom_prefix="$2"
+    local tool_options="$3"
+    local source_directory="$4"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
         cd "$source_directory"
+        if [[ -f "${source_directory}/makefile" ]]; then
+            mv "${source_directory}/makefile" "${source_directory}/Makefile"
+        fi
         if [[ -f "${source_directory}/Makefile" ]]; then
             print_status $package "WARN" "Patching"
-            sed -i '' "s|/usr/local|${INSTALL_PREFIX}|g" "$source_directory/Makefile"
+            sed -i '' "s|/usr/local|${INSTALL_PREFIX}${custom_prefix}|g" "$source_directory/Makefile"
         fi
         print_status $package "INFO" "Building"
         make -j$CONCURRENT_JOBS $tool_options
-        print_status $package "INFO" "Installing"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
-        sudo_check
-        sudo make $tool_options install
+        print_status $package "INFO" "Installing"
+        if target_exists "install"; then
+            sudo_check
+            sudo make $tool_options install
+        elif [[ $package == "lpeg" ]]; then
+            sudo_check
+            sudo cp -f ${source_directory}/lpeg.so $INSTALL_PREFIX/lib/lpeg.so
+        else
+            print_status $package "FAIL" "Not implemented"
+        fi
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
 }
 
 install_cmake() {
-    package=$1
-    tool_options="$2"
-    source_directory="$3"
-    build_directory="$4"
+    local package="$1"
+    local tool_options="$2"
+    local source_directory="$3"
+    local build_directory="$4"
 
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
@@ -465,11 +539,86 @@ install_cmake() {
         eval "cmake $cmake_options \"$source_directory\""
         print_status $package "INFO" "Building"
         cmake --build . --parallel=$CONCURRENT_JOBS
-        print_status $package "INFO" "Installing"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+        print_status $package "INFO" "Installing"
         if [[ $package != "llvm-bootstrap" ]]; then
             sudo_check
             sudo cmake --install .
+        fi
+    elif [[ $INSTALL_COMMAND == "remove" ]]; then
+        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+    fi
+}
+
+install_prebuilt() {
+    local package="$1"
+    local prebuilt_installer="$2"
+    local installer_options="$3"
+    local source_directory="$4"
+
+    if [[ $INSTALL_COMMAND == "install" ]]; then
+        if [[ $prebuilt_installer != "" ]]; then
+            uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+            print_status $package "INFO" "Installing"
+            sudo "${source_directory}/${prebuilt_installer}" "$installer_options"
+        else
+            print_status $package "FAIL" "Not implemented"
+        fi
+    elif [[ $INSTALL_COMMAND == "remove" ]]; then
+        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+    fi
+}
+
+install_pip() {
+    local package="$1"
+    if [[ $INSTALL_COMMAND == "install" ]]; then
+        print_status $package "INFO" "Installing"
+        sudo_check
+        # to compile instead of prebuilt, pip3 install --no-binary :all: --upgrade "$package"
+        sudo $SCRIPT_PYTHONPATH/pip3 install --no-binary :all: --upgrade "$package"
+        # sudo $SCRIPT_PYTHONPATH/pip3 install --upgrade "$package"
+    elif [[ $INSTALL_COMMAND == "remove" ]]; then
+        print_status $package "WARN" "Uninstalling"
+        sudo_check
+        sudo $SCRIPT_PYTHONPATH/pip3 uninstall "$package"
+        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+    fi
+}
+
+install_luarocks() {
+    local package="$1"
+    if [[ $INSTALL_COMMAND == "install" ]]; then
+        print_status $package "INFO" "Installing"
+        sudo_check
+        sudo /usr/local/bin/luarocks install "$package"
+    elif [[ $INSTALL_COMMAND == "remove" ]]; then
+        print_status $package "WARN" "Uninstalling"
+        sudo_check
+        sudo /usr/local/bin/luarocks uninstall "$package"
+        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+    fi
+}
+
+install_cargo() {
+    local package="$1"
+    local source_path="$2"
+    local tool_options="$3"
+    local source_directory="$4"
+    local build_directory="$5"
+    if [[ $INSTALL_COMMAND == "install" ]]; then
+        print_status $package "INFO" "Configuring"
+        mkdir -p "$build_directory"
+        cd "$build_directory"
+        print_status $package "INFO" "Building"
+        cargo build --release --manifest-path "$source_directory/Cargo.toml"
+        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+        print_status $package "INFO" "Installing"
+        sudo_check
+        sudo cargo install --path "$source_directory$source_path" --root $INSTALL_PREFIX
+        if [[ $package == "helix" ]]; then
+            rm -rf "$source_directory/runtime/grammars/sources/"
+            sudo_check
+            sudo cp -rPf $source_directory/runtime $INSTALL_PREFIX/libexec/helix/
         fi
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
@@ -515,7 +664,7 @@ install_package() {
                 install_configure "$package" "$3" "$4" "$source_directory" ""
                 ;;
             make_only)
-                install_make_only "$package" "$4" "$source_directory"
+                install_make_only "$package" "$3" "$4" "$source_directory"
                 ;;
             cmake)
                 install_cmake "$package" "$4" "$source_directory" "$build_directory"
@@ -523,18 +672,22 @@ install_package() {
             meson)
                 ;;
             pip)
+                install_pip "$package"
                 ;;
             cargo)
+                install_cargo "$package" "$3" "$4" "$source_directory" "$build_directory"
                 ;;
             swift)
                 ;;
             npm)
                 ;;
-            rocks)
+            luarocks)
+                install_luarocks "$package"
                 ;;
             scons)
                 ;;
             prebuilt)
+                install_prebuilt "$package" "$3" "$4" "$source_directory"
                 ;;
         esac
         if [[ $INSTALL_COMMAND != "remove" ]]; then
@@ -588,7 +741,11 @@ pre_patch() {
         case "$1" in
             curl)
                 print_status $package "INFO" "Patching"
-                sed -i '' "s|\[unreleased\]|$(date '+%Y-%m-%d') \(Unsupported\)|g" "${2}/include/curl/curlver.h"
+                sed -i '' "s|\[unreleased\]|$(date '+%Y-%m-%d') \(No release\)|g" "${2}/include/curl/curlver.h"
+                ;;
+            lpeg)
+                print_status $package "INFO" "Patching"
+                sed -i '' "s|-bundle|-dynamiclib|g" "${2}/makefile"
                 ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -609,6 +766,10 @@ post_patch() {
                 sudo ln -sf $INSTALL_PREFIX/bin/pkgconf $INSTALL_PREFIX/bin/pkg-config
                 sudo ln -sf $INSTALL_PREFIX/share/man/man1/pkgconf $INSTALL_PREFIX/share/man/man1/pkg-config.1
                 ;;
+            lpeg)
+                print_status $package "INFO" "Sym-linking"
+                sudo ln -sf $INSTALL_PREFIX/lib/lpeg.so $INSTALL_PREFIX/lib/liblpeg.dylib
+                ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
@@ -616,6 +777,10 @@ post_patch() {
                 print_status $package "INFO" "Remove symlinks"
                 sudo rm -f $INSTALL_PREFIX/bin/pkg-config
                 sudo rm -f $INSTALL_PREFIX/share/man/man1/pkg-config.1
+                ;;
+            lpeg)
+            print_status $package "INFO" "Remove symlinks"
+                sudo rm -f $INSTALL_PREFIX/lib/liblpeg.dylib
                 ;;
         esac
     fi
@@ -719,7 +884,8 @@ main() {
         export CC="$INSTALL_PREFIX/bin/clang"
         export CXX="$INSTALL_PREFIX/bin/clang++"
         export LD="$INSTALL_PREFIX/bin/ld64.lld"
-        export LDFLAGS="-fuse-ld=$LD"
+        export CFLAGS="-fuse-ld=$LD -Wl,rpath,$INSTALL_PREFIX/lib"
+        export CXXFLAGS="-fuse-ld=$LD -Wl,rpath,$INSTALL_PREFIX/lib"
         export AR="$INSTALL_PREFIX/bin/llvm-ar"
         export AS="$INSTALL_PREFIX/bin/llvm-as"
         export RANLIB="$INSTALL_PREFIX/bin/llvm-ranlib"
@@ -738,7 +904,7 @@ main() {
         # rtmpdump - openssl, zlib
         install_package "rtmpdump" "make_only" "" "SYS=darwin" "" "git" "https://git.ffmpeg.org/rtmpdump.git" "master" "YES" "YES"
         # curl - pkgconf, brotli, nghttp2, nghttp3, psl (deferred), libssh2, openssl, rtmpdump, zstd, krb5 (mac), openldap (mac), zlib (mac)
-        # We cannot use Secure Transport with QUIC and HTTP/3, it is also deprecated
+        # We cannot use Secure Transport with QUIC and HTTP/3, and it is also deprecated
         install_package "curl" \
                         "cmake" "" \
                         " \
@@ -756,10 +922,35 @@ main() {
         # tk (versioned) - tcl
         install_package "tk" "configure" "" "--with-tcl=${BUILDS_DIRECTORY}/tcl --enable-aqua=yes" "/macosx" "https" "http://prdownloads.sourceforge.net/tcl/" "tk9.0.1-src.tar.gz" "YES" "YES"
         # mpdecimal (versioned) -
-        install_package "mpdecimal" "configure" "" "LD=$CC LDXX=$CXX LDXXFLAGS=$LDFLAGS" "" "https" "https://www.bytereef.org/software/mpdecimal/releases/" "mpdecimal-4.0.0.tar.gz" "YES" "YES"
+        install_package "mpdecimal" "configure" "" "LD=$CC LDXX=$CXX LDXXFLAGS=$CFLAGS" "" "https" "https://www.bytereef.org/software/mpdecimal/releases/" "mpdecimal-4.0.0.tar.gz" "YES" "YES"
         # cpython - git (xcode), pkgconf, openssl, xz, gdbm, tcl-tk, mpdecimal
-        # Should also install into /Library/Framework/Python.framework
+        # Will also install into /Library/Framework/Python.framework and /Applications/Python version
         install_package "cpython" "configure" "" "LDFLAGS_NODIST=\"-Wl,-rpath,$INSTALL_PREFIX/lib\" --enable-framework --enable-optimizations --with-lto --with-dbmliborder=ndbm --enable-ipv6 --with-system-expat --with-system-libmpdec" "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES"
+        export SCRIPT_PYTHONPATH="$INSTALL_PREFIX/bin"
+        # pip (only upgrade) - cpython
+        install_package "pip" "pip"
+        # sphinx - pip
+        install_package "sphinx" "pip"
+        install_package "sphinx_rtd_theme" "pip"
+        # utf8proc - cmake
+        install_package "utf8proc" "cmake" "" "" "" "git" "https://github.com/JuliaStrings/utf8proc.git" "master" "YES" "YES"
+        # libevent - cmake, openssl
+        install_package "libevent" "cmake" "" "" "" "git" "https://github.com/libevent/libevent.git" "master" "YES" "YES"
+        # tmux - autoconf, automake, libtool, pkgconf, libevent, ncurses, bison, utf8proc
+        install_package "tmux" "configure" "./autogen.sh" "--enable-utf8proc CFLAGS=\"-Wl,-rpath,$INSTALL_PREFIX/lib\"" "" "git" "https://github.com/tmux/tmux.git" "master" "YES" "YES"
+        # libunistring -
+        export am_cv_func_iconv_works=yes
+        install_package "libunistring" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libunistring/" "libunistring-latest.tar.xz" "YES" "YES"
+        # gettext (versioned) - libunistring, libxml2 (mac), ncurses (mac)
+        install_package "gettext" "configure" "" "--disable-csharp --with-included-gettext --with-included-glib --with-included-libcroco --with-emacs" "" "https" "https://ftp.gnu.org/gnu/gettext/" "gettext-0.23.1.tar.xz" "YES" "YES"
+        # neovim - cmake, internal dependencies built
+        install_package "neovim" "make_only" "" "CMAKE_C_FLAGS=\"-fuse-ld=$LD\" CMAKE_BUILD_TYPE=Release CMAKE_INSTALL_PREFIX=$INSTALL_PREFIX" "" "git" "https://github.com/neovim/neovim.git" "master" "YES" "YES"
+        # rust (beta)
+        install_package "rust-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-beta-aarch64-apple-darwin.tar.xz" "YES" "YES"
+        # helix - rust
+        export HELIX_DEFAULT_RUNTIME=$INSTALL_PREFIX/libexec/helix/runtime
+        install_package "helix" "cargo" "/helix-term" "" "" "git" "https://github.com/helix-editor/helix.git" "master" "YES" "YES"
+
     fi
 
     # Clean up empty directories left behind in install-prefix
@@ -768,7 +959,8 @@ main() {
         sudo_check
         sudo find "$INSTALL_PREFIX" -mindepth 2 -type d -empty -depth -exec rm -rf {} +
     fi
-    print_status "$INSTALL_COMMAND" "DONE" "Completed"
+    print_status "Script $INSTALL_COMMAND" "DONE" "Completed"
+    print "\033[4;1H\033[?25h\n" > /dev/tty
 }
 
 main "$@"
