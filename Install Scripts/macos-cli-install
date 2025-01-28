@@ -154,15 +154,21 @@ uninstall_manifested() {
 }
 
 check_activity() {
-    last_activity=$(stat -f "%Dm" -t %s "$1")
-    if [[ -z $last_activity ]]; then return 1; fi
-    echo $(( $(date +%s) - last_activity ))
+    local last_activity_one=$(stat -f "%Dm" -t %s "$1")
+    if [[ -z "$last_activity_one" ]]; then return 1; fi
+    local last_activity_two=$(stat -f "%Dm" -t %s "$2")
+    if [[ -z "$last_activity_two" ]]; then return 1; fi
+    if [ "$last_activity_one" -gt "$last_activity_two" ]; then
+        echo $(( $(date +%s) - last_activity_one ))
+    else
+        echo $(( $(date +%s) - last_activity_two ))
+    fi
 }
 
 monitor_activity() {
     local spin=0
     while true; do
-        local elapsed_time=$(check_activity "$1")
+        local elapsed_time=$(check_activity "$1" "$2")
         if [[ $? ]]; then
             if (( elapsed_time < 1)); then
                 if (( spin == 0 )); then
@@ -192,7 +198,7 @@ monitor_activity() {
 
 monitor_activity_plain() {
     while true; do
-        local elapsed_time=$(check_activity "$1")
+        local elapsed_time=$(check_activity "$1" "$2")
         if [[ $? ]]; then
             if (( elapsed_time < SPINNER_PLAIN_INTERVAL*2 )); then
                 print -n "*" > /dev/tty
@@ -205,16 +211,26 @@ monitor_activity_plain() {
 spinner() {
     if [[ $1 == on ]]; then
         if [[ $PLAIN_TEXT == ON ]]; then
-            monitor_activity_plain $INSTALL_LOG_OUT &
+            monitor_activity_plain $INSTALL_LOG_OUT $INSTALL_LOG_ERR &
             SPINNER_PID=$!
         else
-            monitor_activity $INSTALL_LOG_OUT &
+            monitor_activity $INSTALL_LOG_OUT $INSTALL_LOG_ERR &
             SPINNER_PID=$!
         fi
     else
         if (( SPINNER_PID > 0 )); then
             kill "$SPINNER_PID" 2>/dev/null
             SPINNER_PID=0
+        fi
+    fi
+}
+
+# adds LC_RPATH if it is not found, $1-filename $2-rpath
+add_rpath() {
+    if [[ -f "$1" ]]; then
+        if ! otool -l "$1" | grep -q "LC_RPATH"; then
+            sudo_check
+            sudo install_name_tool -add_rpath "$2" "$1"
         fi
     fi
 }
@@ -343,7 +359,8 @@ download_git() {
         print_status $package "INFO" "Updating"
         git -C "${SOURCES_DIRECTORY}/${package}" checkout $branch
         git -C "${SOURCES_DIRECTORY}/${package}" reset --hard HEAD
-        git -C "${SOURCES_DIRECTORY}/${package}" clean -xffd
+        sudo_check
+        sudo git -C "${SOURCES_DIRECTORY}/${package}" clean -xffd
         git -C "${SOURCES_DIRECTORY}/${package}" pull
     fi
 }
@@ -560,7 +577,17 @@ install_prebuilt() {
         if [[ $prebuilt_installer != "" ]]; then
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
+            sudo_check
             sudo "${source_directory}/${prebuilt_installer}" "$installer_options"
+        elif [[ $package == "jdtls" ]]; then
+            # based on AUR script
+            uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+            print_status $package "INFO" "Installing"
+            sudo_check
+            sudo mkdir -p "$INSTALL_PREFIX/share/java/jdtls"
+            sudo cp -R "${source_directory}/"config_* "${source_directory}/features" "${source_directory}/plugins" "${source_directory}/bin" "$INSTALL_PREFIX/share/java/jdtls"
+            sudo mkdir -p "$INSTALL_PREFIX/bin"
+            sudo ln -s "$INSTALL_PREFIX/share/java/jdtls/bin/jdtls" "$INSTALL_PREFIX/bin/jdtls"
         else
             print_status $package "FAIL" "Not implemented"
         fi
@@ -884,8 +911,8 @@ main() {
         export CC="$INSTALL_PREFIX/bin/clang"
         export CXX="$INSTALL_PREFIX/bin/clang++"
         export LD="$INSTALL_PREFIX/bin/ld64.lld"
-        export CFLAGS="-fuse-ld=$LD -Wl,rpath,$INSTALL_PREFIX/lib"
-        export CXXFLAGS="-fuse-ld=$LD -Wl,rpath,$INSTALL_PREFIX/lib"
+        export CFLAGS="-fuse-ld=$LD"
+        export CXXFLAGS="-fuse-ld=$LD"
         export AR="$INSTALL_PREFIX/bin/llvm-ar"
         export AS="$INSTALL_PREFIX/bin/llvm-as"
         export RANLIB="$INSTALL_PREFIX/bin/llvm-ranlib"
@@ -948,8 +975,11 @@ main() {
         # rust (beta)
         install_package "rust-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-beta-aarch64-apple-darwin.tar.xz" "YES" "YES"
         # helix - rust
-        export HELIX_DEFAULT_RUNTIME=$INSTALL_PREFIX/libexec/helix/runtime
+        export HELIX_DEFAULT_RUNTIME="$INSTALL_PREFIX/libexec/helix/runtime"
         install_package "helix" "cargo" "/helix-term" "" "" "git" "https://github.com/helix-editor/helix.git" "master" "YES" "YES"
+        add_rpath "$INSTALL_PREFIX/bin/hx" "@loader_path/../lib"
+        # jdtls (versioned) - java, python
+        install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.44.0/" "jdt-language-server-1.44.0-202501221502.tar.gz" "YES" "NO"
 
     fi
 
