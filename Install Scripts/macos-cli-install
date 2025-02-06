@@ -775,7 +775,7 @@ install_prebuilt() {
             local install_count=0
             for install_dir in "${install_dirs[@]}"; do
                 if [[ -d "$source_directory/$install_dir" ]]; then
-                    sudo cp -rPf "$source_directory/$install_dir" "$INSTALL_PREFIX/$install_dir"
+                    sudo cp -rPf "$source_directory/$install_dir" "$INSTALL_PREFIX/"
                     install_count=1
                 fi
             done
