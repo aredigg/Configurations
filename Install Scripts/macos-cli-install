@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-VERSION="1.12"
+VERSION="1.13"
 SKIPTIME="864000"
 SPINNER_INTERVAL=0.4
 SPINNER_PLAIN_INTERVAL=1
@@ -399,6 +399,118 @@ EOF
     git apply $diff_filename
 }
 
+patch_x265() {
+    local package=$1
+    local diff_filename=$2
+    if [[ ! -f $diff_filename ]]; then
+        tee "$diff_filename" > /dev/null << EOF
+diff --git a/source/CMakeLists.txt b/source/CMakeLists.txt
+index 37dbe1a87..a6e6d6c1a 100755
+--- a/source/CMakeLists.txt
++++ b/source/CMakeLists.txt
+@@ -6,18 +6,9 @@ if(NOT CMAKE_BUILD_TYPE)
+         FORCE)
+ endif()
+ message(STATUS "cmake version \${CMAKE_VERSION}")
+-if(POLICY CMP0025)
+-    cmake_policy(SET CMP0025 OLD) # report Apple's Clang as just Clang
+-endif()
+-if(POLICY CMP0042)
+-    cmake_policy(SET CMP0042 NEW) # MACOSX_RPATH
+-endif()
+-if(POLICY CMP0054)
+-    cmake_policy(SET CMP0054 OLD) # Only interpret if() arguments as variables or keywords when unquoted
+-endif()
+
+ project (x265)
+-cmake_minimum_required (VERSION 2.8.8) # OBJECT libraries require 2.8.8
++cmake_minimum_required (VERSION 3.5) # OBJECT libraries require 2.8.8
+ include(CheckIncludeFiles)
+ include(CheckFunctionExists)
+ include(CheckSymbolExists)
+EOF
+    fi
+
+    git apply $diff_filename
+}
+
+patch_ffmpeg() {
+    local package=$1
+    local diff_filename=$2
+    if [[ ! -f $diff_filename ]]; then
+        tee "$diff_filename" > /dev/null << EOF
+diff --git a/libavdevice/opengl_enc.c b/libavdevice/opengl_enc.c
+index 93d3959880..25eba7d7cf 100644
+--- a/libavdevice/opengl_enc.c
++++ b/libavdevice/opengl_enc.c
+@@ -117,7 +117,7 @@ typedef void   (APIENTRY *FF_PFNGLATTACHSHADERPROC) (GLuint program, GLuint shad
+ typedef GLuint (APIENTRY *FF_PFNGLCREATESHADERPROC) (GLenum type);
+ typedef void   (APIENTRY *FF_PFNGLDELETESHADERPROC) (GLuint shader);
+ typedef void   (APIENTRY *FF_PFNGLCOMPILESHADERPROC) (GLuint shader);
+-typedef void   (APIENTRY *FF_PFNGLSHADERSOURCEPROC) (GLuint shader, GLsizei count, const char* *string, const GLint *length);
++typedef void   (APIENTRY *FF_PFNGLSHADERSOURCEPROC) (GLuint shader, GLsizei count, const char* const *string, const GLint *length);
+ typedef void   (APIENTRY *FF_PFNGLGETSHADERIVPROC) (GLuint shader, GLenum pname, GLint *params);
+ typedef void   (APIENTRY *FF_PFNGLGETSHADERINFOLOGPROC) (GLuint shader, GLsizei bufSize, GLsizei *length, char *infoLog);
+
+EOF
+        fi
+        git apply $diff_filename
+        if [[ ! -f "${diff_filename}_2" ]]; then
+            tee "${diff_filename}_2" > /dev/null << EOF
+diff --git a/libavfilter/af_asr.c b/libavfilter/af_asr.c
+index 8e8eeb19a7..bba793cfb5 100644
+--- a/libavfilter/af_asr.c
++++ b/libavfilter/af_asr.c
+@@ -41,7 +41,7 @@ typedef struct ASRContext {
+     char *logfn;
+
+     ps_decoder_t *ps;
+-    cmd_ln_t *config;
++    ps_config_t *config;
+
+     int utt_started;
+ } ASRContext;
+@@ -100,16 +100,16 @@ static av_cold int asr_init(AVFilterContext *ctx)
+     ASRContext *s = ctx->priv;
+     const float frate = s->rate;
+     char *rate = av_asprintf("%f", frate);
+-    const char *argv[] = { "-logfn",    s->logfn,
+-                           "-hmm",      s->hmm,
+-                           "-lm",       s->lm,
+-                           "-lmctl",    s->lmctl,
+-                           "-lmname",   s->lmname,
+-                           "-dict",     s->dict,
+-                           "-samprate", rate,
+-                           NULL };
+-
+-    s->config = cmd_ln_parse_r(NULL, ps_args(), 14, (char **)argv, 0);
++
++    s->config = ps_config_init(NULL);
++    ps_config_set_str(s->config, "logfn", s->logfn);
++    ps_config_set_str(s->config, "hmm", s->hmm);
++    ps_config_set_str(s->config, "lm", s->lm);
++    ps_config_set_str(s->config, "lmctl", s->lmctl);
++    ps_config_set_str(s->config, "lmname", s->lmname);
++    ps_config_set_str(s->config, "dict", s->dict);
++    ps_config_set_str(s->config, "samprate", rate);
++
+     av_free(rate);
+     if (!s->config)
+         return AVERROR(ENOMEM);
+@@ -160,7 +160,7 @@ static av_cold void asr_uninit(AVFilterContext *ctx)
+
+     ps_free(s->ps);
+     s->ps = NULL;
+-    cmd_ln_free_r(s->config);
++    ps_config_free(s->config);
+     s->config = NULL;
+ }
+
+EOF
+         fi
+         git apply "${diff_filename}_2"
+}
+
 # PKG for builtins
 # ==============================================================================
 
@@ -451,6 +563,30 @@ EOF
     fi
 }
 
+install_pkg_lffi() {
+sudo_check
+if [[ $INSTALL_COMMAND == "remove" ]]; then
+    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/libffi.pc" ]]; then
+        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/libffi.pc"
+    fi
+elif [[ $INSTALL_COMMAND == "install" ]]; then
+    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/libffi.pc" ]]; then
+        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/libffi.pc" > /dev/null << EOF
+prefix=$SDK_PATH/usr
+exec_prefix=/usr
+bindir=/usr/bin
+libdir=/usr/lib
+includedir=$SDK_PATH/usr/include/ffi
+
+Name: libffi
+Description: Library supporting Foreign Function Interfaces
+Version: 3.3.0
+Libs: -L\${libdir} -lffi
+EOF
+    fi
+fi
+}
+
 # Download functions
 # ==============================================================================
 
@@ -472,7 +608,7 @@ download_git() {
         git -C "${SOURCES_DIRECTORY}/${package}" config --add remote.origin.fetch '^refs/heads/users/*'
         git -C "${SOURCES_DIRECTORY}/${package}" config --add remote.origin.fetch '^refs/heads/revert-*'
         git -C "${SOURCES_DIRECTORY}/${package}" checkout $branch
-        git -C "${SOURCES_DIRECTORY}/${package}" submodule update --init
+        git -C "${SOURCES_DIRECTORY}/${package}" submodule update --init --recursive
         git -C "${SOURCES_DIRECTORY}/${package}" checkout $tag
     else
         # !!! The script assumes that you don't use these temporary directories for development
@@ -616,6 +752,9 @@ install_configure() {
             eval "${source_directory}/Configure $configure_options"
         elif [[ -f "${source_directory}/bootstrap" ]]; then
             eval "${source_directory}/bootstrap $configure_options"
+            if [[ -f "${source_directory}/configure" ]]; then
+                eval "${source_directory}/configure $configure_options"
+            fi
         else
             cd "$source_directory"
             eval "${source_directory}/$configure_builder"
@@ -646,12 +785,21 @@ install_make_only() {
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
         cd "$source_directory"
+        if [[ $package == "x265" ]]; then
+            print_status $package "INFO" "Making"
+            ./make-Makefiles.bash
+        fi
+        print_status $package "INFO" "Configuring"
         if [[ -f "${source_directory}/makefile" ]]; then
             mv "${source_directory}/makefile" "${source_directory}/Makefile"
         fi
         if [[ -f "${source_directory}/Makefile" ]]; then
             print_status $package "WARN" "Patching"
             sed -i '' "s|/usr/local|${INSTALL_PREFIX}${custom_prefix}|g" "$source_directory/Makefile"
+        fi
+        if [[ $package == "molten-vk" ]]; then
+            print_status $package "INFO" "Dependencies"
+            ./fetchDependencies --$tool_options
         fi
         print_status $package "INFO" "Building"
         make -j$CONCURRENT_JOBS $tool_options
@@ -675,37 +823,6 @@ install_cmake() {
     local build_directory="$4"
 
     if [[ $INSTALL_COMMAND == "install" ]]; then
-        local patch_required=false
-        if [[ $package == "libyuv" || $package == "libjxl" || $package == "graphite2" ]]; then
-            patch_required=true
-        fi
-        if $patch_required; then
-            print_status $package "INFO" "Patching"
-            if [[ -f "$source_directory/CMakeLists.txt" ]]; then
-                sed -i "" -E 's/(CMAKE_MINIMUM_REQUIRED[[:space:]]*\([[:space:]]*VERSION[[:space:]]*)2\.[0-9.]*/\13.5/I' "$source_directory/CMakeLists.txt"
-            fi
-            if [[ -f "$source_directory/src/CMakeLists.txt" ]]; then
-                sed -i "" -E 's/(CMAKE_MINIMUM_REQUIRED[[:space:]]*\([[:space:]]*VERSION[[:space:]]*)2\.[0-9.]*/\13.5/I' "$source_directory/src/CMakeLists.txt"
-            fi
-            if [[ -f "$source_directory/tests/bittwiddling/CMakeLists.txt" ]]; then
-                sed -i "" -E 's/(CMAKE_MINIMUM_REQUIRED[[:space:]]*\([[:space:]]*VERSION[[:space:]]*)2\.[0-9.]*/\13.5/I' "$source_directory/tests/bittwiddling/CMakeLists.txt"
-            fi
-            if [[ -f "$source_directory/tests/json/CMakeLists.txt" ]]; then
-                sed -i "" -E 's/(CMAKE_MINIMUM_REQUIRED[[:space:]]*\([[:space:]]*VERSION[[:space:]]*)2\.[0-9.]*/\13.5/I' "$source_directory/tests/json/CMakeLists.txt"
-            fi
-            if [[ -f "$source_directory/tests/sparsetest/CMakeLists.txt" ]]; then
-                sed -i "" -E 's/(CMAKE_MINIMUM_REQUIRED[[:space:]]*\([[:space:]]*VERSION[[:space:]]*)2\.[0-9.]*/\13.5/I' "$source_directory/tests/sparsetest/CMakeLists.txt"
-            fi
-            if [[ -f "$source_directory/tests/utftest/CMakeLists.txt" ]]; then
-                sed -i "" -E 's/(CMAKE_MINIMUM_REQUIRED[[:space:]]*\([[:space:]]*VERSION[[:space:]]*)2\.[0-9.]*/\13.5/I' "$source_directory/tests/utftest/CMakeLists.txt"
-            fi
-            if [[ -f "$source_directory/gr2fonttest/CMakeLists.txt" ]]; then
-                sed -i "" -E 's/(CMAKE_MINIMUM_REQUIRED[[:space:]]*\([[:space:]]*VERSION[[:space:]]*)2\.[0-9.]*/\13.5/I' "$source_directory/gr2fonttest/CMakeLists.txt"
-            fi
-            if [[ -f "$source_directory/third_party/sjpeg/CMakeLists.txt" ]]; then
-                sed -i "" -E 's/(CMAKE_MINIMUM_REQUIRED[[:space:]]*\([[:space:]]*VERSION[[:space:]]*)2\.[0-9.]*/\13.5/I' "$source_directory/third_party/sjpeg/CMakeLists.txt"
-            fi
-        fi
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
         cd "$build_directory"
@@ -855,6 +972,50 @@ install_cargo() {
     fi
 }
 
+install_custom_x265() {
+    local package="$1"
+    local source_directory="$2"
+    local build_directory="$3"
+
+    if [[ $INSTALL_COMMAND == "install" ]]; then
+        print_status $package "INFO" "Configuring"
+        cmake_options="-Wno-dev -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DCMAKE_INSTALL_RPATH=@loader_path/../lib -DCMAKE_BUILD_TYPE=Release"
+
+        mkdir -p "$build_directory/main12"
+        cd "$build_directory/main12"
+        eval "cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DMAIN12=ON \"$source_directory\""
+        print_status $package "INFO" "Building"
+        cmake --build . --parallel=$CONCURRENT_JOBS
+
+        mkdir -p "$build_directory/main10"
+        cd "$build_directory/main10"
+        eval "cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DENABLE_HDR10_PLUS=ON \"$source_directory\""
+        print_status $package "INFO" "Building"
+        cmake --build . --parallel=$CONCURRENT_JOBS
+
+        mkdir -p "$build_directory/main"
+        cd "$build_directory/main"
+        eval "cmake $cmake_options -DLINKED_12BIT=ON -DLINKED_10BIT=ON -DEXTRA_LINK_FLAGS=-L. -DEXTRA_LIB=\"x265_main10.a;x265_main12.a\" \"$source_directory\""
+        print_status $package "INFO" "Building"
+        cmake --build . --parallel=$CONCURRENT_JOBS
+
+        mv "$build_directory/main12/libx265.a" "$build_directory/main/libx265_main12.a"
+        mv "$build_directory/main10/libx265.a" "$build_directory/main/libx265_main10.a"
+        mv "$build_directory/main/libx265.a" "$build_directory/main/libx265_main.a"
+        libtool -static -o "$build_directory/main/libx265.a" \
+            "$build_directory/main/libx265_main.a" \
+            "$build_directory/main/libx265_main10.a" \
+            "$build_directory/main/libx265_main12.a"
+
+        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+        print_status $package "INFO" "Installing"
+        sudo_check
+        sudo cmake --install .
+    elif [[ $INSTALL_COMMAND == "remove" ]]; then
+        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+    fi
+}
+
 install_package() {
     local package=$1
     local skip_time=$SKIPTIME
@@ -920,6 +1081,9 @@ install_package() {
             prebuilt)
                 install_prebuilt "$package" "$3" "$4" "$source_directory"
                 ;;
+            custom)
+                install_custom_$package "$package" "$source_directory" "$build_directory"
+                ;;
         esac
         if [[ $INSTALL_COMMAND != "remove" ]]; then
             print_status $package "INFO" "Manifesting"
@@ -969,10 +1133,82 @@ install_certs() {
 # after download, before install
 pre_patch() {
     if [[ $INSTALL_COMMAND == "install" ]]; then
+        local patch_required=false
+        local packages=(
+            "libyuv" \
+            "libjxl" \
+            "graphite2" \
+            "libogg" \
+            "libvorbis" \
+            "portaudio" \
+            "libqrencode" \
+            "soxr" \
+            "snappy" \
+            "libtorch" \
+            "x265" \
+            "chromaprint" \
+            "vid.stab" \
+            "libzmq" \
+        )
+        if [[ " ${packages[@]} " =~ " ${package} " ]]; then
+            patch_required=true
+        fi
+        if $patch_required; then
+            print_status $package "INFO" "Patching"
+            local regex_sed='s/(CMAKE_MINIMUM_REQUIRED[[:space:]]*\([[:space:]]*VERSION[[:space:]]*)(")?(2\.[0-9.]+|3\.0)(")?/\13.5/I'
+            local cmake_paths=(
+                "" \
+                "src/" \
+                "tests/" \
+                "tests/bittwiddling/" \
+                "tests/json/" \
+                "tests/sparsetest/" \
+                "tests/utftest/" \
+                "unittests/" \
+                "gr2fonttest/" \
+                "third_party/sjpeg/" \
+                "third_party/protobuf/cmake/" \
+                "third_party/psimd/" \
+                "third_party/FP16/" \
+                "third_party/NNPACK/" \
+                "third_party/tensorpipe/third_party/libuv/" \
+                "third_party/gloo/" \
+                "android/pytorch_android/" \
+                "test/edge/" \
+                "dynamicHDR10/" \
+            )
+            for cmake_path in "${cmake_paths[@]}"; do
+                if [[ -f "$source_directory/${cmake_path}CMakeLists.txt" ]]; then
+                    sed -i "" -E "$regex_sed" "$source_directory/${cmake_path}CMakeLists.txt"
+                fi
+            done
+        fi
+
         case "$1" in
             curl)
                 print_status $package "INFO" "Patching"
                 sed -i '' "s|\[unreleased\]|$(date '+%Y-%m-%d') \(No release\)|g" "${2}/include/curl/curlver.h"
+                ;;
+            lame)
+                print_status $package "INFO" "Patching"
+                sed -i '' "/lame_init_old/d" "${2}/include/libmp3lame.sym"
+                curl -sOL https://tmkk.undo.jp/lame/lame-3.100-neon-20230418.diff
+                patch -ruN -d ${2} < lame-3.100-neon-20230418.diff
+                ;;
+            flite)
+                print_status $package "INFO" "Patching"
+                sed -i '' "s|/proc/cpuinfo|/dev/null|g" "${2}/configure"
+                sed -i '' "s|/proc/cpuinfo|/dev/null|g" "${2}/configure.in"
+                ;;
+            ffmpeg)
+                print_status $package "INFO" "Patching"
+                cd "$source_directory"
+                patch_ffmpeg "$package" "$source_directory/local_install.patch"
+                ;;
+            x265)
+                print_status $package "INFO" "Patching"
+                cd "$source_directory"
+                patch_x265 "$package" "$source_directory/local_install.patch"
                 ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -992,6 +1228,9 @@ post_patch() {
                 print_status $package "INFO" "Sym-linking"
                 sudo ln -sf $INSTALL_PREFIX/bin/pkgconf $INSTALL_PREFIX/bin/pkg-config
                 sudo ln -sf $INSTALL_PREFIX/share/man/man1/pkgconf $INSTALL_PREFIX/share/man/man1/pkg-config.1
+                ;;
+            pocketsphinx)
+                sudo cp $INSTALL_PREFIX/include/pocketsphinx.h $INSTALL_PREFIX/include/pocketsphinx/
                 ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -1021,6 +1260,7 @@ main() {
         # 1-package 2-kind 3-alternative 4-options 5-source_location 6-download_kind 7-url 8-filename/branchname 9-use_etag 10-strip_extract
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
         export LDXXFLAGS="-Wl,-rpath,@loader_path/../lib"
+        export JAVA_HOME=$(java -XshowSettings:properties -version 2>&1 > /dev/null | grep 'java.home' | awk '{print $3}')
 
         # m4 (builtin old) -
         install_package "m4" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/m4/" "m4-latest.tar.xz" "YES" "YES"
@@ -1042,6 +1282,7 @@ main() {
         install_package "pkgconf" "configure" "./autogen.sh" "--with-system-libdir=/usr/lib:${SDK_PATH}/usr/lib --with-system-includedir=/usr/include:${SDK_PATH}/usr/include" "" "git" "https://github.com/pkgconf/pkgconf.git" "master" "YES" "YES" "pkgconf-2.3.0"
         install_pkg_zlib
         install_pkg_xml2
+        install_pkg_lffi
 
         # gdbm -
         install_package "gdbm" "configure" "" "--enable-libgdbm-compat --without-readline" "" "https" "https://ftp.gnu.org/gnu/gdbm/" "gdbm-latest.tar.gz" "YES" "YES"
@@ -1051,6 +1292,9 @@ main() {
 
         # ninja - python (builtin), cmake
         install_package "ninja" "cmake" "" "-DBUILD_TESTING=OFF" "" "git" "https://github.com/ninja-build/ninja.git" "release" "YES" "YES"
+
+        # openmp
+        install_package "openmp" "prebuilt" "" "" "/local" "https" "https://mac.r-project.org/openmp/" "openmp-17.0.6-darwin20-Release.tar.gz" "YES" "YES"
 
         # libtommath - cmake, libtool
         install_package "libtommath" "cmake" "" "" "" "git" "https://github.com/libtom/libtommath.git" "develop" "YES" "YES"
@@ -1065,7 +1309,7 @@ main() {
         install_package "xz" "cmake" "" "" "" "git" "https://github.com/tukaani-project/xz.git" "master" "YES" "YES"
 
         # z3 - cmake, python (builtin), gmp (defer)
-        install_package "z3" "cmake" "" "" "" "git" "https://github.com/Z3Prover/z3.git" "master" "YES" "YES"
+        install_package "z3" "cmake" "" "-DZ3_BUILD_PYTHON_BINDINGS=TRUE -DZ3_INSTALL_PYTHON_BINDINGS=TRUE -DZ3_BUILD_JAVA_BINDINGS=TRUE -DZ3_INSTALL_JAVA_BINDINGS=TRUE" "" "git" "https://github.com/Z3Prover/z3.git" "master" "YES" "YES"
 
         # lz4 -
         install_package "lz4" "make_only" "" "" "" "git" "https://github.com/lz4/lz4.git" "dev" "YES" "YES"
@@ -1286,8 +1530,14 @@ main() {
         # gtk3+
         install_package "gtk3" "meson" "" "-Dx11_backend=false -Dquartz_backend=true -Dintrospection=true" "" "https" "https://download.gnome.org/sources/gtk+/3.24/" "gtk+-3.24.43.tar.xz" "YES" "YES"
 
-        # lxml - python
-        install_package "lxml" "pip"
+        # numpy - python
+        install_package "numpy" "pip"
+
+        # pytest - python
+        install_package "pytest" "pip"
+
+        # sympy - python
+        install_package "sympy" "pip"
 
         # gtk-doc
         install_package "gtk-doc" "meson" "" "-Dtests=false -Dyelp_manual=false" "" "git" "https://gitlab.gnome.org/GNOME/gtk-doc.git" "master" "YES" "YES"
@@ -1309,6 +1559,267 @@ main() {
         # gtkwave
         install_package "gtkwave" "meson" "" "" "" "git" "https://github.com/gtkwave/gtkwave.git" "master" "YES" "YES"
 
+        # molten-vk
+        install_package "molten-vk" "make_only" "" "macos" "" "git" "https://github.com/KhronosGroup/MoltenVK.git" "main" "YES" "YES"
+
+        # fastfetch
+        install_package "fastfetch" "cmake" "" "" "" "git" "https://github.com/fastfetch-cli/fastfetch.git" "dev" "YES" "YES"
+
+        # gmp
+        install_package "gmp" "configure" "" "" "" "https" "https://gmplib.org/download/gmp/" "gmp-6.3.0.tar.xz" "YES" "YES"
+
+        # nettle
+        install_package "nettle" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/nettle/" "nettle-3.10.1.tar.gz" "YES" "YES"
+
+        # unbound
+        install_package "unbound" "configure" "" "--with-libexpat=$SDK_PATH/usr --with-libevent" "" "git" "https://github.com/NLnetLabs/unbound.git" "master" "YES" "YES"
+
+        # libidn2
+        install_package "libidn2" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libidn/" "libidn2-latest.tar.gz" "YES" "YES"
+
+        # texinfo
+        install_package "texinfo" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/texinfo/" "texinfo-7.2.tar.xz" "YES" "YES"
+
+        # p11-kit
+        install_package "p11-kit" "meson" "" "" "" "git" "https://github.com/p11-glue/p11-kit.git" "master" "YES" "YES"
+
+        # libuv
+        install_package "libuv" "cmake" "" "" "" "git" "https://github.com/libuv/libuv.git" "v1.x" "YES" "YES"
+
+        # c-ares
+        install_package "c-ares" "cmake" "" "" "" "git" "https://github.com/c-ares/c-ares.git" "main" "YES" "YES"
+
+        # gnutls
+        install_package "gnutls" "configure" "" "--with-included-libtasn1 --with-included-unistring" "" "https" "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/" "gnutls-3.8.9.tar.xz" "YES" "YES"
+
+        # libass
+        install_package "libass" "meson" "" "" "" "git" "https://github.com/libass/libass.git" "master" "YES" "YES"
+
+        # libbluray
+        install_package "libbluray" "configure" "" "--with-included-libtasn1 --with-included-unistring --disable-bdjava-jar" "" "https" "https://download.videolan.org/videolan/libbluray/1.3.4/" "libbluray-1.3.4.tar.bz2" "YES" "YES"
+
+        # mpg123
+        install_package "mpg123" "configure" "" "" "" "https" "https://sourceforge.net/projects/mpg123/files/mpg123/1.32.9/" "mpg123-1.32.9.tar.bz2" "YES" "YES"
+
+        # lame
+        install_package "lame" "configure" "" "--disable-debug --enable-nasm" "" "https" "https://sourceforge.net/projects/lame/files/lame/3.100/" "lame-3.100.tar.gz" "YES" "YES"
+
+        # libsndfile
+        install_package "libsndfile" "cmake" "" "" "" "git" "https://github.com/libsndfile/libsndfile.git" "master" "YES" "YES"
+
+        # libbs2b
+        export LDFLAGS="-lmpg123 -lmp3lame"
+        install_package "libbs2b" "configure" "" "" "" "https" "https://downloads.sourceforge.net/project/bs2b/libbs2b/3.1.0/" "libbs2b-3.1.0.tar.gz" "YES" "YES"
+        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+
+        # dav1d
+        install_package "dav1d" "meson" "" "" "" "git" "https://github.com/videolan/dav1d.git" "master" "YES" "YES"
+
+        # fdk-aac
+        install_package "fdk-aac" "cmake" "" "" "" "git" "https://github.com/mstorsjo/fdk-aac.git" "master" "YES" "YES"
+
+        # flite
+        install_package "flite" "configure_in_source" "" "" "" "git" "https://github.com/festvox/flite.git" "master" "YES" "YES"
+
+        # game-music-emu
+        install_package "game-music-emu" "cmake" "" "" "" "git" "https://github.com/libgme/game-music-emu.git" "master" "YES" "YES"
+
+        # libmodplug
+        install_package "libmodplug" "configure" "" "" "" "https" "https://sourceforge.net/projects/modplug-xmms/files/libmodplug/0.8.8.5/" "libmodplug-0.8.8.5.tar.gz" "YES" "YES"
+
+        # cunit
+        install_package "cunit" "cmake" "" "" "" "git" "https://gitlab.com/cunity/cunit.git" "master" "YES" "YES"
+
+        # libmysofa
+        install_package "libmysofa" "cmake" "" "" "" "git" "https://github.com/hoene/libmysofa.git" "main" "YES" "YES"
+
+        # opencore-amr
+        install_package "opencore-amr" "configure" "" "" "" "https" "https://sourceforge.net/projects/opencore-amr/files/opencore-amr/" "opencore-amr-0.1.6.tar.gz" "YES" "YES"
+
+        # vo-amrwbenc
+        install_package "vo-amrwbenc" "configure" "" "" "" "https" "https://sourceforge.net/projects/opencore-amr/files/vo-amrwbenc/" "vo-amrwbenc-0.1.3.tar.gz" "YES" "YES"
+
+        # openh264
+        install_package "openh264" "make_only" "" "" "" "git" "https://github.com/cisco/openh264.git" "master" "YES" "YES"
+
+        # libogg
+        install_package "libogg" "cmake" "" "" "" "git" "https://gitlab.xiph.org/xiph/ogg.git" "master" "YES" "YES"
+
+        # libvorbis
+        install_package "libvorbis" "cmake" "" "" "" "git" "https://gitlab.xiph.org/xiph/vorbis.git" "master" "YES" "YES"
+
+        # libflac
+        install_package "libflac" "cmake" "" "-DINSTALL_MANPAGES=OFF" "" "git" "https://github.com/xiph/flac.git" "master" "YES" "YES"
+
+        # libopus
+        install_package "libopus" "cmake" "" "" "" "git" "https://github.com/xiph/opus.git" "main" "YES" "YES"
+
+        # libtheora
+        install_package "libtheora" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/xiph/theora.git" "master" "YES" "YES"
+
+        # portaudio
+        install_package "portaudio" "cmake" "" "" "" "git" "https://github.com/PortAudio/portaudio.git" "master" "YES" "YES"
+
+        # openmpt
+        export LDFLAGS="-lmp3lame -framework CoreServices -framework CoreAudio -framework AudioToolbox"
+        install_package "openmpt" "make_only" "" "" "" "git" "https://github.com/OpenMPT/openmpt.git" "master" "YES" "YES"
+        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+
+        # libqrencode
+        install_package "libqrencode" "cmake" "" "" "" "git" "https://github.com/fukuchi/libqrencode.git" "master" "YES" "YES"
+
+        # rubberband
+        export LDFLAGS="-lmpg123 -lmp3lame"
+        install_package "rubberband" "meson" "" "" "" "git" "https://github.com/breakfastquay/rubberband.git" "default" "YES" "YES"
+        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+
+        # shine
+        install_package "shine" "configure_in_source" "" "" "" "git" "https://github.com/toots/shine.git" "main" "YES" "YES"
+
+        # soxr
+        install_package "soxr" "cmake" "" "" "" "git" "https://github.com/chirlu/soxr.git" "master" "YES" "YES"
+
+        # snappy
+        install_package "snappy" "cmake" "" "-DSNAPPY_BUILD_TESTS=OFF -DSNAPPY_BUILD_BENCHMARKS=OFF" "" "git" "https://github.com/google/snappy.git" "main" "YES" "YES"
+
+        # speex
+        install_package "speex" "meson" "" "" "" "git" "https://gitlab.xiph.org/xiph/speex.git" "master" "YES" "YES"
+
+        # svt-av1
+        install_package "svt-av1" "cmake" "" "" "" "git" "https://gitlab.com/AOMediaCodec/SVT-AV1.git" "master" "YES" "YES" "v2.3.0"
+
+        # twolame
+        export LDFLAGS="-lmpg123 -lmp3lame"
+        install_package "twolame" "configure" "" "" "" "https" "https://downloads.sourceforge.net/twolame/" "twolame-0.4.0.tar.gz" "YES" "YES"
+        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+
+        # vmaf
+        install_package "vmaf" "meson" "" "" "/libvmaf" "git" "https://github.com/Netflix/vmaf.git" "master" "YES" "YES"
+
+        # libvpx
+        install_package "libvpx" "configure" "" "" "" "git" "https://chromium.googlesource.com/webm/libvpx.git" "main" "YES" "YES"
+
+        # xavs2
+        CFLAGS="-Wno-incompatible-pointer-types"
+        install_package "xavs2" "configure_in_source" "" "--host=aarch64-apple-darwin24" "/build/linux" "git" "https://github.com/pkuvcl/xavs2.git" "master" "YES" "YES"
+        CFLAGS=""
+
+        # xvidcore
+        install_package "xvidcore" "configure_in_source" "" "" "/build/generic" "https" "https://downloads.xvid.com/downloads/" "xvidcore-1.3.7.tar.bz2" "YES" "YES"
+
+        # zimg
+        install_package "zimg" "configure" "./autogen.sh" "" "" "git" "https://github.com/sekrit-twc/zimg.git" "master" "YES" "YES"
+
+        # zvbi
+        install_package "zvbi" "configure" "./autogen.sh" "" "" "git" "https://github.com/zapping-vbi/zvbi.git" "main" "YES" "YES"
+
+        # openal
+        export LDFLAGS="-lmpg123 -lmp3lame"
+        install_package "openal" "cmake" "" "" "" "git" "https://github.com/kcat/openal-soft.git" "master" "YES" "YES"
+        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+
+        # pocketsphinx
+        install_package "pocketsphinx" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/cmusphinx/pocketsphinx.git" "main" "YES" "YES"
+
+        # libgpg-error
+        install_package "libgpg-error" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgpg-error/" "libgpg-error-1.51.tar.bz2" "YES" "YES"
+
+        # libgcrypt
+        install_package "libgcrypt" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgcrypt/" "libgcrypt-1.10.3.tar.bz2" "YES" "YES"
+
+        # libcdio
+        install_package "libcdio" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libcdio/" "libcdio-2.1.0.tar.bz2" "YES" "YES"
+
+        # libcdio-paranoia
+        install_package "libcdio-paranoia" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/libcdio/libcdio-paranoia.git" "master" "YES" "YES"
+
+        # chromaprint
+        install_package "chromaprint" "cmake" "" "" "" "git" "https://github.com/acoustid/chromaprint.git" "master" "YES" "YES"
+
+        # vid.stab
+        install_package "vid.stab" "cmake" "" "" "" "git" "https://github.com/georgmartius/vid.stab.git" "master" "YES" "YES"
+
+        # x264
+        install_package "x264" "configure" "" "--enable-shared --enable-static --enable-strip" "" "git" "https://code.videolan.org/videolan/x264.git" "master" "YES" "YES"
+
+        # libzmq
+        install_package "libzmq" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/zeromq/libzmq.git" "master" "YES" "YES"
+
+        # ffmpeg
+        # --enable-libx265 removed
+        # --extra-cflags=-I$INSTALL_PREFIX/include --extra-ldflags=-L$INSTALL_PREFIX/lib removed
+        export LDFLAGS="-logg -lvorbis -lsharpyuv -lwebp -Wl,-rpath,@loader_path/../lib"
+        install_package "ffmpeg" "configure" "" "--enable-gpl --enable-version3 --enable-nonfree --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libcdio --enable-libdav1d --enable-libfdk-aac --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libgme --enable-libharfbuzz --enable-libjxl --enable-libmp3lame --enable-libopencore-amrwb --enable-opengl --enable-libopus  --enable-libopenjpeg --enable-libopenmpt --enable-libsvtav1 --enable-libtheora --enable-libxvid  --enable-libsnappy --enable-libmysofa --enable-libopencore-amrnb --enable-libmodplug --enable-libqrencode --enable-libshine --enable-librubberband --enable-libsoxr --enable-libsnappy --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvo-amrwbenc --enable-libvpx --enable-libwebp --enable-libx264 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzvbi --enable-gcrypt --enable-gmp --enable-gnutls --enable-openal --enable-opencl --enable-pocketsphinx  --enable-libopenh264 --enable-libvmaf --enable-libxavs2 --enable-libzmq" "" "git" "https://git.ffmpeg.org/ffmpeg.git" "master" "YES" "YES"
+        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        sudo install_name_tool -change "bin/libopenmpt.so" "@rpath/libopenmpt.so" $INSTALL_PREFIX/bin/ffmpeg
+        sudo install_name_tool -change "bin/libopenmpt.so" "@rpath/libopenmpt.so" $INSTALL_PREFIX/bin/ffprobe
+
+        # x265
+        export CXXFLAGS="-I/usr/local/include -I$SDK_PATH/usr/include"
+        install_package "x265" "custom" "" "" "/source" "git" "https://bitbucket.org/multicoreware/x265_git.git" "master" "YES" "YES"
+
+        # libyaml
+        install_package "libyaml" "configure" "" "" "" "https" "http://pyyaml.org/download/libyaml/" "yaml-0.2.5.tar.gz" "YES" "YES"
+
+        # filelock - python
+        install_package "filelock" "pip"
+
+        # fsspec - python
+        install_package "fsspec" "pip"
+
+        # markupsafe - python
+        install_package "markupsafe" "pip"
+
+        # jinja2 - python
+        install_package "jinja2" "pip"
+
+        # mpmath - python
+        install_package "mpmath" "pip"
+
+        # networkx - python
+        install_package "networkx" "pip"
+
+        # opt-einsum - python
+        install_package "opt-einsum" "pip"
+
+        # pyyaml - python
+        install_package "pyyaml" "pip"
+
+        # typing-extensions - python
+        install_package "typing-extensions" "pip"
+
+        # abseil
+        install_package "abseil" "cmake" "" "-DCMAKE_CXX_STANDARD=17 -DBUILD_SHARED_LIBS=ON -DABSL_PROPAGATE_CXX_STD=ON -DABSL_ENABLE_INSTALL=ON" "" "git" "https://github.com/abseil/abseil-cpp.git" "master" "YES" "YES"
+
+        # eigen
+        install_package "eigen" "cmake" "" "" "" "git" "https://gitlab.com/libeigen/eigen.git" "master" "YES" "YES"
+
+        # protobuf
+        install_package "protobuf" "cmake" "" "-DCMAKE_CXX_STANDARD=17 -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_LIBPROTOC=ON -DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/protocolbuffers/protobuf.git" "main" "YES" "YES"
+
+        # pybind11
+        install_package "pybind11" "cmake" "" "-DPYBIND11_TEST=OFF" "" "git" "https://github.com/pybind/pybind11.git" "master" "YES" "YES"
+
+        # sleef
+        install_package "sleef" "cmake" "" "-DSLEEF_BUILD_INLINE_HEADERS=TRUE -DSLEEF_BUILD_SHARED_LIBS=ON -DSLEEF_BUILD_TESTS=OFF" "" "git" "https://github.com/shibatch/sleef.git" "master" "YES" "YES"
+
+        # kleidiai
+        install_package "kleidiai" "cmake" "" "" "" "git" "https://git.gitlab.arm.com/kleidi/kleidiai.git" "main" "YES" "YES"
+
+        # libtorch
+        export CPPFLAGS="-Xclang -fopenmp"
+        export LDFLAGS="-Wl,-rpath,@loader_path/../lib -lomp"
+        install_package "libtorch" "cmake" "" "-DUSE_CUDA=OFF -DUSE_MPS=ON -DUSE_XPU=OFF -DUSE_OPENMP=ON -DUSE_NNPACK=OFF -DUSE_FBGEMM=OFF -DUSE_DISTRIBUTED=ON -DBUILD_JNI=ON -DJAVA_HOME=$JAVA_HOME -DBUILD_CUSTOM_PROTOBUF=OFF -DBUILD_TEST=OFF -DUSE_CCACHE=OFF -DUSE_SYSTEM_EIGEN_INSTALL=ON -DUSE_SYSTEM_PYBIND11=ON -DUSE_SYSTEM_SLEEF=ON -DUSE_SYSTEM_LIBS=ON" "" "git" "https://github.com/pytorch/pytorch.git" "main" "YES" "YES" "v2.6.0"
+        export CPPFLAGS=""
+        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+
+        # mdcat
+        install_package "mdcat" "cargo" "" "" "" "git" "https://github.com/swsnr/mdcat.git" "main" "YES" "YES"
+
+        # eza
+        install_package "eza" "cargo" "" "" "" "git" "https://github.com/eza-community/eza.git" "main" "YES" "YES"
+
+        # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
             install_package "cpython" "configure" "" "LDFLAGS_NODIST=\"-Wl,-rpath,@loader_path/../lib\" --enable-framework --enable-optimizations --with-lto --with-dbmliborder=ndbm --enable-ipv6 --with-system-expat --with-system-libmpdec" "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES"
         fi
