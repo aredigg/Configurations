@@ -421,22 +421,28 @@ patch_x265() {
     if [[ ! -f $diff_filename ]]; then
         tee "$diff_filename" > /dev/null << EOF
 diff --git a/source/CMakeLists.txt b/source/CMakeLists.txt
-index 37dbe1a87..a6e6d6c1a 100755
+index 37dbe1a87..e072de6e8 100755
 --- a/source/CMakeLists.txt
 +++ b/source/CMakeLists.txt
-@@ -6,18 +6,9 @@ if(NOT CMAKE_BUILD_TYPE)
+@@ -6,18 +6,18 @@ if(NOT CMAKE_BUILD_TYPE)
          FORCE)
  endif()
  message(STATUS "cmake version \${CMAKE_VERSION}")
 -if(POLICY CMP0025)
 -    cmake_policy(SET CMP0025 OLD) # report Apple's Clang as just Clang
 -endif()
--if(POLICY CMP0042)
--    cmake_policy(SET CMP0042 NEW) # MACOSX_RPATH
--endif()
++# if(POLICY CMP0025)
++#     cmake_policy(SET CMP0025 OLD) # report Apple's Clang as just Clang
++# endif()
+ if(POLICY CMP0042)
+     cmake_policy(SET CMP0042 NEW) # MACOSX_RPATH
+ endif()
 -if(POLICY CMP0054)
 -    cmake_policy(SET CMP0054 OLD) # Only interpret if() arguments as variables or keywords when unquoted
 -endif()
++# if(POLICY CMP0054)
++#     cmake_policy(SET CMP0054 OLD) # Only interpret if() arguments as variables or keywords when unquoted
++# endif()
 
  project (x265)
 -cmake_minimum_required (VERSION 2.8.8) # OBJECT libraries require 2.8.8
@@ -444,6 +450,19 @@ index 37dbe1a87..a6e6d6c1a 100755
  include(CheckIncludeFiles)
  include(CheckFunctionExists)
  include(CheckSymbolExists)
+diff --git a/source/dynamicHDR10/CMakeLists.txt b/source/dynamicHDR10/CMakeLists.txt
+index 22fb79d44..da907bcd6 100644
+--- a/source/dynamicHDR10/CMakeLists.txt
++++ b/source/dynamicHDR10/CMakeLists.txt
+@@ -10,7 +10,7 @@ add_library(dynamicHDR10 OBJECT
+     hdr10plus.h
+     api.cpp )
+
+-cmake_minimum_required (VERSION 2.8.11)
++cmake_minimum_required (VERSION 3.5)
+ project(dynamicHDR10)
+ include(CheckIncludeFiles)
+ include(CheckFunctionExists)
 EOF
     fi
 
@@ -777,9 +796,13 @@ install_configure() {
             fi
         else
             cd "$source_directory"
-            eval "${source_directory}/$configure_builder"
+            if [[ -f "${source_directory}/$configure_builder" ]]; then
+                eval "${source_directory}/$configure_builder"
+            fi
             cd "$build_directory"
-            eval "${source_directory}/configure $configure_options"
+            if [[ -f "${source_directory}/configure" ]]; then
+                eval "${source_directory}/configure $configure_options"
+            fi
         fi
         print_status $package "INFO" "Building"
         make -j$CONCURRENT_JOBS
@@ -1199,7 +1222,6 @@ pre_patch() {
             "soxr" \
             "snappy" \
             "libtorch" \
-            "x265" \
             "chromaprint" \
             "vid.stab" \
             "libzmq" \
@@ -1838,72 +1860,17 @@ main() {
         install_package "virglrenderer" "meson" "" "" "" "git" "https://github.com/akihikodaki/virglrenderer.git" "macos" "YES" "YES"
 
         # qemu
-        install_package "qemu" "meson" "" "-Dopengl=enabled -Dvirglrenderer=enabled -Dqemu_ga_distro=macOS" "" "git" "https://github.com/akihikodaki/virglrenderer.git" "macos" "YES" "YES"
-
-        # x265
-        export CXXFLAGS="-I/usr/local/include -I$SDK_PATH/usr/include"
-        install_package "x265" "custom" "" "" "/source" "git" "https://bitbucket.org/multicoreware/x265_git.git" "master" "YES" "YES"
-
-        # libyaml
-        install_package "libyaml" "configure" "" "" "" "https" "http://pyyaml.org/download/libyaml/" "yaml-0.2.5.tar.gz" "YES" "YES"
-
-        # filelock - python
-        install_package "filelock" "pip"
-
-        # fsspec - python
-        install_package "fsspec" "pip"
-
-        # markupsafe - python
-        install_package "markupsafe" "pip"
-
-        # jinja2 - python
-        install_package "jinja2" "pip"
-
-        # mpmath - python
-        install_package "mpmath" "pip"
-
-        # networkx - python
-        install_package "networkx" "pip"
-
-        # opt-einsum - python
-        install_package "opt-einsum" "pip"
-
-        # pyyaml - python
-        install_package "pyyaml" "pip"
-
-        # typing-extensions - python
-        install_package "typing-extensions" "pip"
-
-        # abseil
-        install_package "abseil" "cmake" "" "-DCMAKE_CXX_STANDARD=17 -DBUILD_SHARED_LIBS=ON -DABSL_PROPAGATE_CXX_STD=ON -DABSL_ENABLE_INSTALL=ON" "" "git" "https://github.com/abseil/abseil-cpp.git" "master" "YES" "YES"
-
-        # eigen
-        install_package "eigen" "cmake" "" "" "" "git" "https://gitlab.com/libeigen/eigen.git" "master" "YES" "YES"
-
-        # protobuf
-        install_package "protobuf" "cmake" "" "-DCMAKE_CXX_STANDARD=17 -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_LIBPROTOC=ON -DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/protocolbuffers/protobuf.git" "main" "YES" "YES"
-
-        # pybind11
-        install_package "pybind11" "cmake" "" "-DPYBIND11_TEST=OFF" "" "git" "https://github.com/pybind/pybind11.git" "master" "YES" "YES"
-
-        # sleef
-        install_package "sleef" "cmake" "" "-DSLEEF_BUILD_INLINE_HEADERS=TRUE -DSLEEF_BUILD_SHARED_LIBS=ON -DSLEEF_BUILD_TESTS=OFF" "" "git" "https://github.com/shibatch/sleef.git" "master" "YES" "YES"
-
-        # kleidiai
-        install_package "kleidiai" "cmake" "" "" "" "git" "https://git.gitlab.arm.com/kleidi/kleidiai.git" "main" "YES" "YES"
-
-        # libtorch
-        export CPPFLAGS="-Xclang -fopenmp"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib -lomp"
-        install_package "libtorch" "cmake" "" "-DUSE_CUDA=OFF -DUSE_MPS=ON -DUSE_XPU=OFF -DUSE_OPENMP=ON -DUSE_NNPACK=OFF -DUSE_FBGEMM=OFF -DUSE_DISTRIBUTED=ON -DBUILD_JNI=ON -DJAVA_HOME=$JAVA_HOME -DBUILD_CUSTOM_PROTOBUF=OFF -DBUILD_TEST=OFF -DUSE_CCACHE=OFF -DUSE_SYSTEM_EIGEN_INSTALL=ON -DUSE_SYSTEM_PYBIND11=ON -DUSE_SYSTEM_SLEEF=ON -DUSE_SYSTEM_LIBS=ON" "" "git" "https://github.com/pytorch/pytorch.git" "main" "YES" "YES" "v2.6.0"
-        export CPPFLAGS=""
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        install_package "qemu" "configure" "" "--qemu-ga-distro=macOS --enable-opengl --enable-virglrenderer" "" "git" "https://github.com/akihikodaki/qemu.git" "macos" "YES" "YES"
 
         # mdcat
         install_package "mdcat" "cargo" "" "" "" "git" "https://github.com/swsnr/mdcat.git" "main" "YES" "YES"
 
         # eza
         install_package "eza" "cargo" "" "" "" "git" "https://github.com/eza-community/eza.git" "main" "YES" "YES"
+
+        # x265
+        export CXXFLAGS="-I/usr/local/include -I$SDK_PATH/usr/include"
+        install_package "x265" "custom" "" "" "/source" "git" "https://bitbucket.org/multicoreware/x265_git.git" "master" "YES" "YES"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
