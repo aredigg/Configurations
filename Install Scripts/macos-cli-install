@@ -53,6 +53,7 @@ Options:
   --speak   Speak package and stages
   --plain   No fancy text
   --tool=   Use with remove to uninstall only one tool
+  --archive Create tar.xz archives of the built install
 $1"
 }
 
@@ -238,6 +239,16 @@ add_rpath() {
     fi
 }
 
+create_archive() {
+    local package=$1
+    local archive_file_list=$2
+    print_status $package "INFO" "Archiving"
+    if [[ -f "$ARCHIVE_DIRECTORY/${package}.tar.xz" ]]; then
+        rm "$ARCHIVE_DIRECTORY/${package}.tar.xz"
+    fi
+    tar cf "$ARCHIVE_DIRECTORY/${package}.tar.xz" -J --files-from="$archive_file_list"
+}
+
 # Script setup
 # ==============================================================================
 setup() {
@@ -247,6 +258,7 @@ setup() {
     DEBUG=OFF
     SPEAK=OFF
     PLAIN_TEXT=OFF
+    CREATE_XZ=OFF
     local positional_args=()
     local unknown_args=()
     for arg in "$@"; do
@@ -274,6 +286,9 @@ setup() {
             --plain)
                 PLAIN_TEXT=ON
                 ;;
+            --archive)
+                CREATE_XZ=ON
+                ;;
             --*)
                 unknown_args+=("$arg")
                 ;;
@@ -288,8 +303,8 @@ setup() {
         exit 0
     fi
     SDK_PATH="$(xcrun --show-sdk-path)"
-    INSTALL_CERTS_DIRECTORY="$INSTALL_PREFIX/etc/ssl/certs"
-    INSTALL_ROOT_CERTS="$INSTALL_CERTS_DIRECTORY/ca-certificates.pem"
+    INSTALL_CERTS_DIRECTORY="$INSTALL_PREFIX/etc/ssl"
+    INSTALL_ROOT_CERTS="$INSTALL_CERTS_DIRECTORY/cert.pem"
     export PATH="${PATH:-}:${INSTALL_PREFIX}/bin"
     export SCRIPT_PYTHONPATH=$(dirname $(which python3))
     export MACOSX_DEPLOYMENT_TARGET=15.00
@@ -298,10 +313,11 @@ setup() {
     CONCURRENT_JOBS=$(("$(getconf _NPROCESSORS_ONLN)" + "$(echo "$(getconf _NPROCESSORS_ONLN) / 2" | bc)"))
     SWD="$PWD/.temp"
     MANIFEST_DIRECTORY="$SWD/manifests"
+    ARCHIVE_DIRECTORY="$SWD/archives"
     SOURCES_DIRECTORY="$SWD/sources"
     BUILDS_DIRECTORY="$SWD/builds"
     LOGS_DIRECTORY="$SWD/logs"
-    mkdir -p "$MANIFEST_DIRECTORY" "$SOURCES_DIRECTORY" "$BUILDS_DIRECTORY" "$LOGS_DIRECTORY"
+    mkdir -p "$MANIFEST_DIRECTORY" "$ARCHIVE_DIRECTORY" "$SOURCES_DIRECTORY" "$BUILDS_DIRECTORY" "$LOGS_DIRECTORY"
     INSTALL_LOG_OUT="$LOGS_DIRECTORY/log_out.log"
     INSTALL_LOG_ERR="$LOGS_DIRECTORY/log_err.log"
     while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
@@ -581,6 +597,7 @@ includedir=$SDK_PATH/usr/include/ffi
 Name: libffi
 Description: Library supporting Foreign Function Interfaces
 Version: 3.3.0
+Cflags: -I\${includedir}
 Libs: -L\${libdir} -lffi
 EOF
     fi
@@ -717,6 +734,9 @@ download() {
         https)
             download_https "$1" "$3" "$4" "$5" "$6"
             ;;
+        none)
+            mkdir -p "${SOURCES_DIRECTORY}/${1}"
+            ;;
     esac
 }
 
@@ -826,7 +846,7 @@ install_cmake() {
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
         cd "$build_directory"
-        cmake_options="-Wno-dev -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DCMAKE_INSTALL_RPATH=@loader_path/../lib -DCMAKE_BUILD_TYPE=Release ${tool_options}"
+        cmake_options="-Wno-dev -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DCMAKE_INSTALL_RPATH=@loader_path/../lib -DCMAKE_BUILD_TYPE=Release ${tool_options}"
         if [[ $package != "ninja" ]]; then
             cmake_options="-GNinja $cmake_options"
         fi
@@ -1016,6 +1036,37 @@ install_custom_x265() {
     fi
 }
 
+install_custom_depot_tools() {
+    print_status $package "INFO" "No install"
+}
+
+install_custom_angle() {
+    local package="$1"
+    local source_directory="$2"
+    local build_directory="$3"
+    if [[ $INSTALL_COMMAND == "install" ]]; then
+        print_status $package "INFO" "Initializing"
+        if [[ -f "$source_directory/angle" ]]; then
+            sudo rm -rf "$source_directory/angle"
+        fi
+        mkdir -p "$source_directory/angle"
+        cd "$source_directory/angle"
+        print_status $package "INFO" "Fetching"
+        fetch angle || gclient sync
+        print_status $package "INFO" "Configuring"
+        gn gen --args=is_debug=false $build_directory/Release
+        print_status $package "INFO" "Building"
+        autoninja -C $build_directory/Release
+        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+        print_status $package "INFO" "Installing"
+        sudo_check
+        sudo cp $build_directory/Release/*.dylib "$INSTALL_PREFIX/lib/"
+        sudo cp -r include/* "$INSTALL_PREFIX/include"
+    elif [[ $INSTALL_COMMAND == "remove" ]]; then
+        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+    fi
+}
+
 install_package() {
     local package=$1
     local skip_time=$SKIPTIME
@@ -1090,6 +1141,9 @@ install_package() {
             find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/$package.post-manifest"
             comm -13 "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest" >> "$MANIFEST_DIRECTORY/$package.manifest"
             rm "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest"
+            if [[ $CREATE_XZ == ON ]]; then
+                create_archive $package "$MANIFEST_DIRECTORY/$package.manifest"
+            fi
         else
             rm "$MANIFEST_DIRECTORY/${package}.pre-manifest"
         fi
@@ -1229,8 +1283,14 @@ post_patch() {
                 sudo ln -sf $INSTALL_PREFIX/bin/pkgconf $INSTALL_PREFIX/bin/pkg-config
                 sudo ln -sf $INSTALL_PREFIX/share/man/man1/pkgconf $INSTALL_PREFIX/share/man/man1/pkg-config.1
                 ;;
+            cpython)
+                ;;
             pocketsphinx)
                 sudo cp $INSTALL_PREFIX/include/pocketsphinx.h $INSTALL_PREFIX/include/pocketsphinx/
+                ;;
+            ffmpeg)
+                sudo install_name_tool -change "bin/libopenmpt.so" "@rpath/libopenmpt.so" $INSTALL_PREFIX/bin/ffmpeg
+                sudo install_name_tool -change "bin/libopenmpt.so" "@rpath/libopenmpt.so" $INSTALL_PREFIX/bin/ffprobe
                 ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -1356,7 +1416,7 @@ main() {
                         "" "git" "https://github.com/curl/curl.git" "master" "YES" "YES" # "curl-8_11_1"
 
         # tcl (versioned) - openssl, libtommath
-        install_package "tcl" "configure" "" "" "/macosx" "https" "http://prdownloads.sourceforge.net/tcl/" "tcl9.0.1-src.tar.gz" "YES" "YES"
+        install_package "tcl" "configure" "" "" "/macosx" "https" "https://downloads.sourceforge.net/project/tcl/Tcl/9.0.1/" "tcl9.0.1-src.tar.gz" "YES" "YES"
 
         # tk (versioned) - tcl
         install_package "tk" "configure" "" "--with-tcl=${BUILDS_DIRECTORY}/tcl --enable-aqua=yes" "/macosx" "https" "http://prdownloads.sourceforge.net/tcl/" "tk9.0.1-src.tar.gz" "YES" "YES"
@@ -1382,6 +1442,7 @@ main() {
         fi
         export SCRIPT_PYTHONPATH="$INSTALL_PREFIX/bin"
         export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:$PATH"
+        export SSL_CERT_DIR=$INSTALL_CERTS_DIRECTORY
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # pip (only upgrade) - cpython
@@ -1514,7 +1575,7 @@ main() {
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # dbus
-        install_package "dbus" "cmake" "" "" "" "git" "https://gitlab.freedesktop.org/dbus/dbus.git" "master" "YES" "YES"
+        install_package "dbus" "cmake" "" "" "" "git" "https://gitlab.freedesktop.org/dbus/dbus.git" "main" "YES" "YES"
 
         # at-spi2-core - meson
         export LDFLAGS="-Wl,-rpath,$INSTALL_PREFIX/lib"
@@ -1677,7 +1738,9 @@ main() {
         install_package "shine" "configure_in_source" "" "" "" "git" "https://github.com/toots/shine.git" "main" "YES" "YES"
 
         # soxr
+        export LDFLAGS="-lomp"
         install_package "soxr" "cmake" "" "" "" "git" "https://github.com/chirlu/soxr.git" "master" "YES" "YES"
+        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # snappy
         install_package "snappy" "cmake" "" "-DSNAPPY_BUILD_TESTS=OFF -DSNAPPY_BUILD_BENCHMARKS=OFF" "" "git" "https://github.com/google/snappy.git" "main" "YES" "YES"
@@ -1751,8 +1814,31 @@ main() {
         export LDFLAGS="-logg -lvorbis -lsharpyuv -lwebp -Wl,-rpath,@loader_path/../lib"
         install_package "ffmpeg" "configure" "" "--enable-gpl --enable-version3 --enable-nonfree --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libcdio --enable-libdav1d --enable-libfdk-aac --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libgme --enable-libharfbuzz --enable-libjxl --enable-libmp3lame --enable-libopencore-amrwb --enable-opengl --enable-libopus  --enable-libopenjpeg --enable-libopenmpt --enable-libsvtav1 --enable-libtheora --enable-libxvid  --enable-libsnappy --enable-libmysofa --enable-libopencore-amrnb --enable-libmodplug --enable-libqrencode --enable-libshine --enable-librubberband --enable-libsoxr --enable-libsnappy --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvo-amrwbenc --enable-libvpx --enable-libwebp --enable-libx264 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzvbi --enable-gcrypt --enable-gmp --enable-gnutls --enable-openal --enable-opencl --enable-pocketsphinx  --enable-libopenh264 --enable-libvmaf --enable-libxavs2 --enable-libzmq" "" "git" "https://git.ffmpeg.org/ffmpeg.git" "master" "YES" "YES"
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
-        sudo install_name_tool -change "bin/libopenmpt.so" "@rpath/libopenmpt.so" $INSTALL_PREFIX/bin/ffmpeg
-        sudo install_name_tool -change "bin/libopenmpt.so" "@rpath/libopenmpt.so" $INSTALL_PREFIX/bin/ffprobe
+
+        # tomli - python
+        install_package "tomli" "pip"
+
+        # mako - python
+        install_package "mako" "pip"
+
+        # mesa
+        install_package "mesa" "meson" "" "-Dllvm=disabled -Dshared-llvm=disabled -Dcpp_rtti=false -Dplatforms=macos -Dosmesa=true -Dgallium-drivers=softpipe -Dglx=disabled" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
+
+        # depot_tools
+        install_package "depot_tools" "custom" "" "" "" "git" "https://chromium.googlesource.com/chromium/tools/depot_tools.git" "main" "YES" "YES"
+        export PATH="$PATH:${SOURCES_DIRECTORY}/depot_tools"
+
+        # angle
+        install_package "angle" "custom" "" "" "" "none" "" "" "YES" "YES"
+
+        # libepoxy
+        install_package "libepoxy" "meson" "" "-Degl=yes -Dx11=false" "" "git" "https://github.com/akihikodaki/libepoxy.git" "macos" "YES" "YES"
+
+        # virglrenderer
+        install_package "virglrenderer" "meson" "" "" "" "git" "https://github.com/akihikodaki/virglrenderer.git" "macos" "YES" "YES"
+
+        # qemu
+        install_package "qemu" "meson" "" "-Dopengl=enabled -Dvirglrenderer=enabled -Dqemu_ga_distro=macOS" "" "git" "https://github.com/akihikodaki/virglrenderer.git" "macos" "YES" "YES"
 
         # x265
         export CXXFLAGS="-I/usr/local/include -I$SDK_PATH/usr/include"
