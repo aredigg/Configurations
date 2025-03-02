@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-VERSION="1.13"
+VERSION="1.15"
 SKIPTIME="864000"
 SPINNER_INTERVAL=0.4
 SPINNER_PLAIN_INTERVAL=1
@@ -623,6 +623,54 @@ EOF
 fi
 }
 
+install_pkg_ncurses() {
+sudo_check
+if [[ $INSTALL_COMMAND == "remove" ]]; then
+    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/ncurses.pc" ]]; then
+        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/ncurses.pc"
+    fi
+elif [[ $INSTALL_COMMAND == "install" ]]; then
+    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/ncurses.pc" ]]; then
+        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/ncurses.pc" > /dev/null << EOF
+prefix=$SDK_PATH/usr
+exec_prefix=/usr
+bindir=/usr/bin
+libdir=/usr/lib
+includedir=$SDK_PATH/usr/include
+
+Name: ncurses
+Description: Free software emulation of curses
+Version: 5.7.20081102
+Libs: -L\${libdir} -lncurses
+EOF
+    fi
+fi
+}
+
+install_pkg_ncursesw() {
+sudo_check
+if [[ $INSTALL_COMMAND == "remove" ]]; then
+    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/ncursesw.pc" ]]; then
+        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/ncursesw.pc"
+    fi
+elif [[ $INSTALL_COMMAND == "install" ]]; then
+    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/ncursesw.pc" ]]; then
+        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/ncursesw.pc" > /dev/null << EOF
+prefix=$SDK_PATH/usr
+exec_prefix=/usr
+bindir=/usr/bin
+libdir=/usr/lib
+includedir=$SDK_PATH/usr/include
+
+Name: ncursesw
+Description: Free software emulation of curses
+Version: 5.7.20081102
+Libs: -L\${libdir} -lncurses
+EOF
+    fi
+fi
+}
+
 # Download functions
 # ==============================================================================
 
@@ -647,14 +695,19 @@ download_git() {
         git -C "${SOURCES_DIRECTORY}/${package}" submodule update --init --recursive
         git -C "${SOURCES_DIRECTORY}/${package}" checkout $tag
     else
-        # !!! The script assumes that you don't use these temporary directories for development
-        print_status $package "INFO" "Updating"
-        git -C "${SOURCES_DIRECTORY}/${package}" reset --hard HEAD
-        sudo_check
-        sudo git -C "${SOURCES_DIRECTORY}/${package}" clean -xffd
-        git -C "${SOURCES_DIRECTORY}/${package}" checkout $branch
-        git -C "${SOURCES_DIRECTORY}/${package}" pull
-        git -C "${SOURCES_DIRECTORY}/${package}" checkout $tag
+        if git -C "${SOURCES_DIRECTORY}/${package}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            # !!! The script assumes that you don't use these temporary directories for development
+            print_status $package "INFO" "Updating"
+            git -C "${SOURCES_DIRECTORY}/${package}" reset --hard HEAD
+            sudo_check
+            sudo git -C "${SOURCES_DIRECTORY}/${package}" clean -xffd
+            git -C "${SOURCES_DIRECTORY}/${package}" checkout $branch
+            git -C "${SOURCES_DIRECTORY}/${package}" pull
+            git -C "${SOURCES_DIRECTORY}/${package}" checkout $tag
+        else
+            sudo rm -rf "${SOURCES_DIRECTORY}/${package}"
+            download_git "$1" "$2" "$3" "$4"
+        fi
     fi
 }
 
@@ -1286,6 +1339,17 @@ pre_patch() {
                 cd "$source_directory"
                 patch_x265 "$package" "$source_directory/local_install.patch"
                 ;;
+            flex)
+                curl -sOL https://raw.githubusercontent.com/Homebrew/formula-patches/03cf8088210822aa2c1ab544ed58ea04c897d9c4/libtool/configure-big_sur.diff
+                patch -ruN -d ${2} < configure-big_sur.diff
+                ;;
+            snort)
+                sed -i '' "s| -pagezero_size 10000 -image_base 100000000\"|\"|g" "${2}/cmake/FindLuaJIT.cmake"
+                ;;
+            vectorscan)
+                curl -sOL https://github.com/VectorCamp/vectorscan/commit/d9ebb20010b3f90a7a5c7bf4a5edff2eb58f2a4f.patch
+                patch -ruN -d ${2} < d9ebb20010b3f90a7a5c7bf4a5edff2eb58f2a4f.patch
+                ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
@@ -1343,6 +1407,7 @@ main() {
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
         export LDXXFLAGS="-Wl,-rpath,@loader_path/../lib"
         export JAVA_HOME=$(java -XshowSettings:properties -version 2>&1 > /dev/null | grep 'java.home' | awk '{print $3}')
+        export RUSTFLAGS="-C opt-level=3 -C debuginfo=0 -C rpath=true"
 
         # m4 (builtin old) -
         install_package "m4" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/m4/" "m4-latest.tar.xz" "YES" "YES"
@@ -1365,6 +1430,8 @@ main() {
         install_pkg_zlib
         install_pkg_xml2
         install_pkg_lffi
+        install_pkg_ncurses
+        install_pkg_ncursesw
 
         # gdbm -
         install_package "gdbm" "configure" "" "--enable-libgdbm-compat --without-readline" "" "https" "https://ftp.gnu.org/gnu/gdbm/" "gdbm-latest.tar.gz" "YES" "YES"
@@ -1859,18 +1926,115 @@ main() {
         # virglrenderer
         install_package "virglrenderer" "meson" "" "" "" "git" "https://github.com/akihikodaki/virglrenderer.git" "macos" "YES" "YES"
 
+        # vdev2
+        install_package "vdev2" "cmake" "" "" "" "git" "https://github.com/virtualsquare/vde-2.git" "master" "YES" "YES"
+
+        # libssh
+        install_package "libssh" "cmake" "" "-DBUILD_STATIC_LIB=ON -DWITH_SYMBOL_VERSIONING=OFF" "" "git" "https://git.libssh.org/projects/libssh.git" "master" "YES" "YES"
+
+        # capstone
+        install_package "capstone" "cmake" "" "" "" "git" "https://github.com/capstone-engine/capstone.git" "next" "YES" "YES"
+
         # qemu
-        install_package "qemu" "configure" "" "--qemu-ga-distro=macOS --enable-opengl --enable-virglrenderer" "" "git" "https://github.com/akihikodaki/qemu.git" "macos" "YES" "YES"
+        install_package "qemu" "configure" "" \
+            " \
+                --qemu-ga-distro=macOS \
+                --enable-opengl \
+                --enable-virglrenderer \
+                --enable-slirp \
+                --enable-capstone \
+                --enable-curses \
+                --enable-libssh \
+                --enable-vde \
+                --enable-virtfs \
+                --enable-zstd \
+                --extra-cflags=-DNCURSES_WIDECHAR=1 \
+                --enable-cocoa \
+                --disable-sdl \
+            " "" "git" "https://github.com/akihikodaki/qemu.git" "macos" "YES" "YES"
+
+        # sdl2
+        install_package "sdl2" "cmake" "" "" "" "git" "https://github.com/libsdl-org/SDL.git" "SDL2" "YES" "YES"
+
+        # bochs
+        install_package "bochs" "configure" "" \
+            " \
+                --enable-a20-pin \
+                --enable-gdb-stub \
+                --enable-pci \
+                --enable-usb \
+                --enable-usb-ohci \
+                --enable-port-e9-hack \
+                --with-sdl2 \
+            " "/bochs" "git" "https://github.com/bochs-emu/Bochs.git" "master" "YES" "YES"
 
         # mdcat
         install_package "mdcat" "cargo" "" "" "" "git" "https://github.com/swsnr/mdcat.git" "main" "YES" "YES"
+        add_rpath "$INSTALL_PREFIX/bin/mdcat" "@loader_path/../lib"
 
         # eza
         install_package "eza" "cargo" "" "" "" "git" "https://github.com/eza-community/eza.git" "main" "YES" "YES"
 
-        # x265
-        export CXXFLAGS="-I/usr/local/include -I$SDK_PATH/usr/include"
-        install_package "x265" "custom" "" "" "/source" "git" "https://bitbucket.org/multicoreware/x265_git.git" "master" "YES" "YES"
+        # jupyterlab - python
+        install_package "jupyterlab" "pip"
+
+        # voila - python
+        install_package "voila" "pip"
+
+        # matplotlib - python
+        install_package "matplotlib" "pip"
+
+        # pandas - python
+        install_package "pandas" "pip"
+
+        # pillow - python
+        install_package "pillow" "pip"
+
+        # seaborn - python
+        install_package "seaborn" "pip"
+
+        # scikit-learn - python
+        install_package "scikit-learn" "pip"
+
+        # torch - python
+        install_package "torch" "pip"
+
+        # libdaq
+        install_package "libdaq" "configure_in_source" "" "" "" "git" "https://github.com/snort3/libdaq.git" "master" "YES" "YES"
+
+        # hwloc
+        install_package "hwloc" "configure" "./autogen.sh" "" "" "git" "https://github.com/open-mpi/hwloc.git" "master" "YES" "YES"
+
+        # jemalloc
+        install_package "jemalloc" "configure" "./autogen.sh" "" "" "git" "https://github.com/jemalloc/jemalloc.git" "dev" "YES" "YES"
+
+        # libpcap - cmake
+        install_package "libpcap" "cmake" "" "" "" "git" "https://github.com/the-tcpdump-group/libpcap.git" "master" "YES" "YES"
+
+        # boost - cmake
+        install_package "boost" "cmake" "" "" "" "git" "https://github.com/boostorg/boost.git" "master" "YES" "YES"
+
+        # ragel
+        install_package "ragel" "configure" "" "" "" "https" "https://www.colm.net/files/ragel/" "ragel-6.10.tar.gz" "YES" "YES"
+
+        # libdnet - cmake
+        install_package "libdnet" "cmake" "" "" "" "git" "https://github.com/ofalk/libdnet.git" "master" "YES" "YES"
+
+        # help2man
+        install_package "help2man" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/help2man/" "help2man-1.49.3.tar.xz" "YES" "YES"
+
+        # flex
+        install_package "flex" "configure" "" "" "" "https" "https://github.com/westes/flex/releases/download/v2.6.4/" "flex-2.6.4.tar.gz" "YES" "YES"
+
+        # luajit -
+        install_package "luajit" "make_only" "" "" "" "git" "https://luajit.org/git/luajit.git" "v2.1" "YES" "YES"
+
+        # snort - cmake
+        install_package "snort" "cmake" "" "-DDNET_INCLUDE_DIR=$INSTALL_PREFIX/include/dnet" "" "git" "https://github.com/snort3/snort3.git" "master" "YES" "YES"
+        sudo chmod o+r /dev/bpf*
+
+        # snort_extra - cmake
+        install_package "snort_extra" "cmake" "" "" "" "git" "https://github.com/snort3/snort3_extra.git" "master" "YES" "YES"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
