@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-VERSION="1.15"
+VERSION="1.16"
 SKIPTIME="864000"
 SPINNER_INTERVAL=0.4
 SPINNER_PLAIN_INTERVAL=1
@@ -2035,6 +2035,12 @@ main() {
 
         # snort_extra - cmake
         install_package "snort_extra" "cmake" "" "" "" "git" "https://github.com/snort3/snort3_extra.git" "master" "YES" "YES"
+
+        # ruff - python
+        install_package "ruff" "pip"
+
+        # pyright - python
+        install_package "pyright" "pip"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
