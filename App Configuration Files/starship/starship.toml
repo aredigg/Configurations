@@ -1,0 +1,104 @@
+"$schema" = 'https://starship.rs/config-schema.json'
+
+command_timeout = 2000
+palette = "custom"
+add_newline = false
+
+format = '''
+╷$fill$cmd_duration$status$time
+│ $directory$git_branch$git_commit$git_status
+╰⏵ $username
+'''
+
+right_format = '''
+$jobs$swift$python$java$hostname
+'''
+
+continuation_prompt = ' [⏵](frappe_crust) '
+
+[fill]
+symbol = ' '
+
+[cmd_duration]
+format = ' [](frappe_yellow) [$duration](frappe_yellow) '
+min_time = 500
+show_milliseconds = true
+
+[directory]
+format = '[](frappe_crust)[󰝰](fg:white bg:frappe_crust)[ $path](fg:frappe_sapphire bg:frappe_crust)[$read_only](fg:latte_red bg:frappe_crust)[](frappe_crust)'
+truncation_length = 8
+truncation_symbol = ''
+read_only = '  '
+home_symbol = '~'
+before_repo_root_style = 'bold white'
+repo_root_style = 'bold white'
+repo_root_format = '󰊢 [$before_root_path]($before_repo_root_style)[$repo_root]($repo_root_style)[$path](frappe_sapphire)[$read_only](latte_red) '
+
+[git_branch]
+format = '[](frappe_sapphire)[](fg:black bg:frappe_sapphire)[ $branch ](fg:black bg:frappe_sapphire)[](fg:frappe_sapphire bg:frappe_green)$remote_branch[](frappe_green) '
+
+[git_status]
+format = '([\[$all_status$ahead_behind\]](latte_red) )'
+ahead = '⇡${count}'
+diverged = '⇕⇡${ahead_count}⇣${behind_count}'
+behind = '⇣${count}'
+
+[hostname]
+format = '[$ssh_symbol](latte_green)[$hostname](latte_green)'
+ssh_only = true
+ssh_symbol = '  '
+trim_at = '.'
+
+[java]
+symbol = ' '
+format = ' [](frappe_crust)[](fg:coffee bg:frappe_crust)[( $version)](fg:coffee bg:frappe_crust)[](frappe_crust)'
+version_format = '$major.$minor'
+
+[jobs]
+format = '[](frappe_sapphire)[ $number](frappe_sapphire) '
+number_threshold = 1
+
+[python]
+python_binary = ['python3', 'python']
+format = ' [](frappe_crust)[](fg:frappe_yellow bg:frappe_crust)[ ($pyenv_prefix )($version)( \($virtualenv\))](fg:frappe_yellow bg:frappe_crust)[](frappe_crust)'
+version_format = '$major.$minor'
+
+[status]
+format = '( $signal_name) $symbol '
+success_symbol = '[](latte_green)'
+symbol = '[](latte_red)'
+not_found_symbol = '[](frappe_yellow)'
+not_executable_symbol = '[](latte_red)'
+sigint_symbol = '[](latte_red)'
+signal_symbol = '[](frappe_yellow)'
+disabled = false
+map_symbol = true
+
+[swift]
+format = ' [](frappe_crust)[󰛥](fg:latte_red bg:frappe_crust)[( $version)](fg:latte_red bg:frappe_crust)[](frappe_crust)'
+version_format = '$major.$minor'
+
+[time]
+disabled = false
+format = ' [$time](bold frappe_yellow)'
+
+[username]
+format = '[$user]($style) ⏵ '
+style_root = 'bold latte_red'
+style_user = 'frappe_yellow'
+
+[zig]
+format = ' [](frappe_crust)[](fg:white bg:frappe_crust)[( $version)](fg:white bg:frappe_crust)[](frappe_crust)'
+version_format = '$major.$minor'
+
+[palettes.custom]
+latte_red = '#d20f39'
+latte_green = '#40a02b'
+frappe_yellow = '#e5c890'
+frappe_green = '#a6d189'
+frappe_sapphire = '#85c1dc'
+frappe_crust = '#232634'
+frappe_mantle ='#292c3c'
+black = '#000000'
+white = '#ffffff'
+coffee = '#a67b5b'

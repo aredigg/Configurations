@@ -1,0 +1,85 @@
+// Zed settings
+//
+// For information on how to configure Zed, see the Zed
+// documentation: https://zed.dev/docs/configuring-zed
+//
+// To see all of Zed's default settings without changing your
+// custom settings, run `zed: open default settings` from the
+// command palette (cmd-shift-p / ctrl-shift-p)
+{
+  "icon_theme": "VSCode Icons",
+  "show_inline_completions": false,
+  "base_keymap": "VSCode",
+  "ui_font_size": 16,
+  "ui_font_family": ".SystemUIFont",
+  "buffer_font_family": "SF Mono",
+  "buffer_font_size": null,
+  "buffer_font_features": {
+    "ss03": true
+  },
+  "buffer_font_weight": 100,
+  "wrap_guides": [80, 120, 160],
+  "soft_wrap": "none",
+  "theme": {
+    "mode": "system",
+    "light": "Xcode Basic",
+    "dark": "Xcode Midnight"
+  },
+  "tabs": {
+    "git_status": true,
+    "close_position": "left",
+    "file_icons": false
+  },
+  "journal": {
+    "path": "~",
+    "hour_format": "hour24"
+  },
+  "terminal": {
+    "option_as_meta": false,
+    "line_height": "standard"
+  },
+  "languages": {
+    "Markdown": {
+      "format_on_save": "on",
+      "use_on_type_format": false,
+      "prettier": {
+        "allowed": true
+      },
+      "soft_wrap": "editor_width"
+    },
+    "Python": {
+      "language_servers": ["pyright", "ruff"],
+      "format_on_save": "on",
+      "formatter": [
+        {
+          "language_server": {
+            "name": "ruff"
+          }
+        },
+        {
+          "code_actions": {
+            "source.organizeImports.ruff": true,
+            "source.fixAll.ruff": true
+          }
+        }
+      ]
+    }
+  },
+  "lsp": {
+    "ruff": {
+      "initialization_options": {
+        "settings": {
+          "lineLength": 120,
+          "lint": {
+            "select": ["E", "F"],
+            "extendSelect": ["C", "I", "N", "R", "W"]
+          }
+        }
+      }
+    },
+    "jdtls": {
+      "settings": {},
+      "initialization_options": {}
+    }
+  }
+}

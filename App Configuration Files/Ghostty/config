@@ -1,0 +1,33 @@
+font-family = SF Mono
+font-style = Regular
+font-style-bold = Bold
+font-style-italic = Regular Italic
+font-style-bold-italic = Bold Italic
+font-feature = ss03
+adjust-cell-width = -12%
+background = #000000
+foreground = #ffffff
+selection-foreground = #dfefff
+selection-background = #209fb5
+mouse-hide-while-typing = true
+background-opacity = 0.9
+background-blur-radius = 10
+window-padding-x = 12
+window-padding-y = 8
+shell-integration-features = sudo
+palette = 0=#232634
+palette = 1=#d20f39
+palette = 2=#40a02b
+palette = 3=#727448
+palette = 4=#1e66f5
+palette = 5=#8839ef
+palette = 6=#179299
+palette = 7=#bcc0cc
+palette = 8=#7c7f93
+palette = 9=#e78284
+palette = 10=#a6d189
+palette = 11=#e5c890
+palette = 12=#8caaee
+palette = 13=#ca9ee6
+palette = 14=#85c1dc
+palette = 15=#dce0e8
