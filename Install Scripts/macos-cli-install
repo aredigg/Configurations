@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-VERSION="1.16"
+VERSION="1.17"
 SKIPTIME="864000"
 SPINNER_INTERVAL=0.4
 SPINNER_PLAIN_INTERVAL=1
@@ -99,7 +99,7 @@ print_status() {
     if [[ $PLAIN_TEXT == ON ]]; then
         print -n "\n[$2]: ($local_time) $1 - $3 " > /dev/tty
     else
-        printf "\033[2;5H$FANCY_COLOR_BEGIN %-21s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$1" "$3" > /dev/tty
+        printf "\033[2;5H $FANCY_COLOR_BEGIN %-21s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$1" "$3" > /dev/tty
     fi
 }
 
@@ -385,6 +385,9 @@ EOF
 }
 
 patch_libtiff() {
+}
+
+patch_libtiff_x() {
     local package=$1
     local diff_filename=$2
     if [[ ! -f $diff_filename ]]; then
@@ -791,6 +794,8 @@ download_https() {
         else
             tar xf "${SOURCES_DIRECTORY}/${filename}" -C "${SOURCES_DIRECTORY}/${package}"
         fi
+    else
+        print_status $package "WARN" "Not supported filetype"
     fi
 }
 
@@ -843,7 +848,7 @@ install_configure() {
         elif [[ -f "${source_directory}/Configure" ]]; then
             eval "${source_directory}/Configure $configure_options"
         elif [[ -f "${source_directory}/bootstrap" ]]; then
-            eval "${source_directory}/bootstrap $configure_options"
+            eval "${source_directory}/bootstrap $configure_options" || eval "${source_directory}/bootstrap --force"
             if [[ -f "${source_directory}/configure" ]]; then
                 eval "${source_directory}/configure $configure_options"
             fi
@@ -979,7 +984,7 @@ install_prebuilt() {
             sudo mkdir -p "$INSTALL_PREFIX/share/java/jdtls"
             sudo cp -R "${source_directory}/"config_* "${source_directory}/features" "${source_directory}/plugins" "${source_directory}/bin" "$INSTALL_PREFIX/share/java/jdtls"
             sudo mkdir -p "$INSTALL_PREFIX/bin"
-            sudo ln -s "$INSTALL_PREFIX/share/java/jdtls/bin/jdtls" "$INSTALL_PREFIX/bin/jdtls"
+            sudo ln -fs "$INSTALL_PREFIX/share/java/jdtls/bin/jdtls" "$INSTALL_PREFIX/bin/jdtls"
         else
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
@@ -1340,13 +1345,16 @@ pre_patch() {
                 patch_x265 "$package" "$source_directory/local_install.patch"
                 ;;
             flex)
+                print_status $package "INFO" "Patching"
                 curl -sOL https://raw.githubusercontent.com/Homebrew/formula-patches/03cf8088210822aa2c1ab544ed58ea04c897d9c4/libtool/configure-big_sur.diff
                 patch -ruN -d ${2} < configure-big_sur.diff
                 ;;
             snort)
+                print_status $package "INFO" "Patching"
                 sed -i '' "s| -pagezero_size 10000 -image_base 100000000\"|\"|g" "${2}/cmake/FindLuaJIT.cmake"
                 ;;
             vectorscan)
+                print_status $package "INFO" "Patching"
                 curl -sOL https://github.com/VectorCamp/vectorscan/commit/d9ebb20010b3f90a7a5c7bf4a5edff2eb58f2a4f.patch
                 patch -ruN -d ${2} < d9ebb20010b3f90a7a5c7bf4a5edff2eb58f2a4f.patch
                 ;;
@@ -1423,7 +1431,7 @@ main() {
         install_package "autoconf" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/autoconf/" "autoconf-latest.tar.xz" "YES" "YES"
 
         # automake (versioned) - autoconf
-        install_package "automake" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/automake/" "automake-1.17.tar.xz" "YES" "YES"
+        install_package "automake" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/automake/" "automake-1.18.1.tar.xz" "YES" "YES"
 
         # pkgconf - (autoconf, automake, libtool) or meson
         install_package "pkgconf" "configure" "./autogen.sh" "--with-system-libdir=/usr/lib:${SDK_PATH}/usr/lib --with-system-includedir=/usr/include:${SDK_PATH}/usr/include" "" "git" "https://github.com/pkgconf/pkgconf.git" "master" "YES" "YES" "pkgconf-2.3.0"
@@ -1434,7 +1442,7 @@ main() {
         install_pkg_ncursesw
 
         # gdbm -
-        install_package "gdbm" "configure" "" "--enable-libgdbm-compat --without-readline" "" "https" "https://ftp.gnu.org/gnu/gdbm/" "gdbm-latest.tar.gz" "YES" "YES"
+        install_package "gdbm" "configure_in_source" "./autogen.sh" "--enable-libgdbm-compat --without-readline" "" "git" "https://git.savannah.gnu.org/git/gdbm.git" "master" "YES" "YES"
 
         # cmake - bz2 (builtin), zlib (builtin), curl (builtin), ncurses (builtin), sphinx (defer)
         install_package "cmake" "configure" "./bootstrap" "--parallel=$CONCURRENT_JOBS --system-zlib --system-bzip2 --system-curl -- -DCMake_BUILD_LTO=ON -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -Wno-dev" "" "git" "https://gitlab.kitware.com/cmake/cmake.git" "release" "YES" "YES"
@@ -1442,8 +1450,8 @@ main() {
         # ninja - python (builtin), cmake
         install_package "ninja" "cmake" "" "-DBUILD_TESTING=OFF" "" "git" "https://github.com/ninja-build/ninja.git" "release" "YES" "YES"
 
-        # openmp
-        install_package "openmp" "prebuilt" "" "" "/local" "https" "https://mac.r-project.org/openmp/" "openmp-17.0.6-darwin20-Release.tar.gz" "YES" "YES"
+        # openmp (versioned)
+        install_package "openmp" "prebuilt" "" "" "/local" "https" "https://mac.r-project.org/openmp/" "openmp-19.1.0-darwin20-Release.tar.gz" "YES" "YES"
 
         # libtommath - cmake, libtool
         install_package "libtommath" "cmake" "" "" "" "git" "https://github.com/libtom/libtommath.git" "develop" "YES" "YES"
@@ -1505,15 +1513,15 @@ main() {
                         "" "git" "https://github.com/curl/curl.git" "master" "YES" "YES" # "curl-8_11_1"
 
         # tcl (versioned) - openssl, libtommath
-        install_package "tcl" "configure" "" "" "/macosx" "https" "https://downloads.sourceforge.net/project/tcl/Tcl/9.0.1/" "tcl9.0.1-src.tar.gz" "YES" "YES"
+        install_package "tcl" "configure" "" "" "/macosx" "https" "https://downloads.sourceforge.net/project/tcl/Tcl/9.0.2/" "tcl9.0.2-src.tar.gz" "YES" "YES"
 
         # tk (versioned) - tcl
-        install_package "tk" "configure" "" "--with-tcl=${BUILDS_DIRECTORY}/tcl --enable-aqua=yes" "/macosx" "https" "http://prdownloads.sourceforge.net/tcl/" "tk9.0.1-src.tar.gz" "YES" "YES"
+        install_package "tk" "configure" "" "--with-tcl=${BUILDS_DIRECTORY}/tcl --enable-aqua=yes" "/macosx" "https" "http://prdownloads.sourceforge.net/tcl/" "tk9.0.2-src.tar.gz" "YES" "YES"
 
         # mpdecimal (versioned) -
         install_package "mpdecimal" "configure" "" "" "" "https" "https://www.bytereef.org/software/mpdecimal/releases/" "mpdecimal-4.0.0.tar.gz" "YES" "YES"
 
-        # cpython - git (xcode), pkgconf, openssl, xz, gdbm, tcl-tk, mpdecimal
+        # cpython (versioned) - git (xcode), pkgconf, openssl, xz, gdbm, tcl-tk, mpdecimal
         # Will also install into /Library/Framework/Python.framework and /Applications/Python version
         export LDFLAGS=""
         if [[ $INSTALL_COMMAND == "install" ]]; then
@@ -1527,7 +1535,7 @@ main() {
                     --enable-ipv6 \
                     --with-system-expat \
                     --with-system-libmpdec \
-                " "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES" "v3.13.2"
+                " "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES" "v3.13.5"
         fi
         export SCRIPT_PYTHONPATH="$INSTALL_PREFIX/bin"
         export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:$PATH"
@@ -1555,7 +1563,19 @@ main() {
         install_package "libunistring" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libunistring/" "libunistring-latest.tar.xz" "YES" "YES"
 
         # gettext (versioned) - libunistring, libxml2 (mac), ncurses (mac)
-        install_package "gettext" "configure" "" "--disable-csharp --with-included-gettext --with-included-glib --with-included-libcroco --with-emacs" "" "https" "https://ftp.gnu.org/gnu/gettext/" "gettext-0.23.1.tar.xz" "YES" "YES"
+        install_package "gettext" "configure" "" "--disable-csharp --with-included-gettext --with-included-glib --with-included-libcroco --with-emacs" "" "https" "https://ftp.gnu.org/gnu/gettext/" "gettext-0.25.1.tar.xz" "YES" "YES"
+
+        # black - python
+        install_package "black" "pip"
+
+        # debugpy - python
+        install_package "debugpy" "pip"
+
+        # pylint - python
+        install_package "pylint" "pip"
+
+        # tree-sitter-cli - rust
+        install_package "tree-sitter-cli" "cargo" "" "" "/crates/cli" "git" "https://github.com/tree-sitter/tree-sitter.git" "master" "YES" "YES"
 
         # neovim - cmake, internal dependencies built
         install_package "neovim" "make_only" "" "CMAKE_BUILD_TYPE=Release" "" "git" "https://github.com/neovim/neovim.git" "master" "YES" "YES"
@@ -1569,7 +1589,7 @@ main() {
         add_rpath "$INSTALL_PREFIX/bin/hx" "@loader_path/../lib"
 
         # jdtls (versioned) - java, python
-        install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.44.0/" "jdt-language-server-1.44.0-202501221502.tar.gz" "YES" "NO"
+        install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.48.0/" "jdt-language-server-1.48.0-202506271502.tar.gz" "YES" "NO"
 
         # vhdl_ls
         install_package "vhdl_ls" "cargo" "/vhdl_ls" "" "" "git" "https://github.com/VHDL-LS/rust_hdl.git" "master" "YES" "YES"
@@ -1578,8 +1598,8 @@ main() {
         # cocotb - python
         install_package "cocotb" "pip"
 
-        # ghdl
-        install_package "ghdl" "prebuilt" "" "" "" "https" "https://github.com/ghdl/ghdl/releases/download/nightly/" "ghdl-llvm-5.0.0-dev-macos14-aarch64.tar.gz" "YES" "YES"
+        # ghdl (versioned)
+        install_package "ghdl" "prebuilt" "" "" "" "https" "https://github.com/ghdl/ghdl/releases/download/nightly/" "ghdl-llvm-6.0.0-dev-macos15-aarch64.tar.gz" "YES" "YES"
 
         # meson - python
         install_package "meson" "pip"
@@ -1715,11 +1735,11 @@ main() {
         # fastfetch
         install_package "fastfetch" "cmake" "" "" "" "git" "https://github.com/fastfetch-cli/fastfetch.git" "dev" "YES" "YES"
 
-        # gmp
+        # gmp (versioned)
         install_package "gmp" "configure" "" "" "" "https" "https://gmplib.org/download/gmp/" "gmp-6.3.0.tar.xz" "YES" "YES"
 
-        # nettle
-        install_package "nettle" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/nettle/" "nettle-3.10.1.tar.gz" "YES" "YES"
+        # nettle (versioned)
+        install_package "nettle" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/nettle/" "nettle-3.10.2.tar.gz" "YES" "YES"
 
         # unbound
         install_package "unbound" "configure" "" "--with-libexpat=$SDK_PATH/usr --with-libevent" "" "git" "https://github.com/NLnetLabs/unbound.git" "master" "YES" "YES"
@@ -1727,7 +1747,7 @@ main() {
         # libidn2
         install_package "libidn2" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libidn/" "libidn2-latest.tar.gz" "YES" "YES"
 
-        # texinfo
+        # texinfo (versioned)
         install_package "texinfo" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/texinfo/" "texinfo-7.2.tar.xz" "YES" "YES"
 
         # p11-kit
@@ -1739,25 +1759,25 @@ main() {
         # c-ares
         install_package "c-ares" "cmake" "" "" "" "git" "https://github.com/c-ares/c-ares.git" "main" "YES" "YES"
 
-        # gnutls
-        install_package "gnutls" "configure" "" "--with-included-libtasn1 --with-included-unistring" "" "https" "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/" "gnutls-3.8.9.tar.xz" "YES" "YES"
+        # gnutls (versioned)
+        install_package "gnutls" "configure" "" "--with-included-libtasn1 --with-included-unistring" "" "https" "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/" "gnutls-3.8.10.tar.xz" "YES" "YES"
 
         # libass
         install_package "libass" "meson" "" "" "" "git" "https://github.com/libass/libass.git" "master" "YES" "YES"
 
-        # libbluray
+        # libbluray (versioned)
         install_package "libbluray" "configure" "" "--with-included-libtasn1 --with-included-unistring --disable-bdjava-jar" "" "https" "https://download.videolan.org/videolan/libbluray/1.3.4/" "libbluray-1.3.4.tar.bz2" "YES" "YES"
 
-        # mpg123
-        install_package "mpg123" "configure" "" "" "" "https" "https://sourceforge.net/projects/mpg123/files/mpg123/1.32.9/" "mpg123-1.32.9.tar.bz2" "YES" "YES"
+        # mpg123 (versioned)
+        install_package "mpg123" "configure" "" "" "" "https" "https://sourceforge.net/projects/mpg123/files/mpg123/1.33.0/" "mpg123-1.33.0.tar.bz2" "YES" "YES"
 
-        # lame
+        # lame (versioned)
         install_package "lame" "configure" "" "--disable-debug --enable-nasm" "" "https" "https://sourceforge.net/projects/lame/files/lame/3.100/" "lame-3.100.tar.gz" "YES" "YES"
 
         # libsndfile
         install_package "libsndfile" "cmake" "" "" "" "git" "https://github.com/libsndfile/libsndfile.git" "master" "YES" "YES"
 
-        # libbs2b
+        # libbs2b (versioned)
         export LDFLAGS="-lmpg123 -lmp3lame"
         install_package "libbs2b" "configure" "" "" "" "https" "https://downloads.sourceforge.net/project/bs2b/libbs2b/3.1.0/" "libbs2b-3.1.0.tar.gz" "YES" "YES"
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
@@ -1774,8 +1794,8 @@ main() {
         # game-music-emu
         install_package "game-music-emu" "cmake" "" "" "" "git" "https://github.com/libgme/game-music-emu.git" "master" "YES" "YES"
 
-        # libmodplug
-        install_package "libmodplug" "configure" "" "" "" "https" "https://sourceforge.net/projects/modplug-xmms/files/libmodplug/0.8.8.5/" "libmodplug-0.8.8.5.tar.gz" "YES" "YES"
+        # libmodplug (versioned)
+        install_package "libmodplug" "configure" "" "" "" "https" "https://sourceforge.net/projects/modplug-xmms/files/libmodplug/0.8.9.0/" "libmodplug-0.8.9.0.tar.gz" "YES" "YES"
 
         # cunit
         install_package "cunit" "cmake" "" "" "" "git" "https://gitlab.com/cunity/cunit.git" "master" "YES" "YES"
@@ -1783,10 +1803,10 @@ main() {
         # libmysofa
         install_package "libmysofa" "cmake" "" "" "" "git" "https://github.com/hoene/libmysofa.git" "main" "YES" "YES"
 
-        # opencore-amr
+        # opencore-amr (versioned)
         install_package "opencore-amr" "configure" "" "" "" "https" "https://sourceforge.net/projects/opencore-amr/files/opencore-amr/" "opencore-amr-0.1.6.tar.gz" "YES" "YES"
 
-        # vo-amrwbenc
+        # vo-amrwbenc (versioned)
         install_package "vo-amrwbenc" "configure" "" "" "" "https" "https://sourceforge.net/projects/opencore-amr/files/vo-amrwbenc/" "vo-amrwbenc-0.1.3.tar.gz" "YES" "YES"
 
         # openh264
@@ -1837,10 +1857,10 @@ main() {
         # speex
         install_package "speex" "meson" "" "" "" "git" "https://gitlab.xiph.org/xiph/speex.git" "master" "YES" "YES"
 
-        # svt-av1
+        # svt-av1 (versioned, v2)
         install_package "svt-av1" "cmake" "" "" "" "git" "https://gitlab.com/AOMediaCodec/SVT-AV1.git" "master" "YES" "YES" "v2.3.0"
 
-        # twolame
+        # twolame (versioned)
         export LDFLAGS="-lmpg123 -lmp3lame"
         install_package "twolame" "configure" "" "" "" "https" "https://downloads.sourceforge.net/twolame/" "twolame-0.4.0.tar.gz" "YES" "YES"
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
@@ -1856,7 +1876,7 @@ main() {
         install_package "xavs2" "configure_in_source" "" "--host=aarch64-apple-darwin24" "/build/linux" "git" "https://github.com/pkuvcl/xavs2.git" "master" "YES" "YES"
         CFLAGS=""
 
-        # xvidcore
+        # xvidcore (versioned)
         install_package "xvidcore" "configure_in_source" "" "" "/build/generic" "https" "https://downloads.xvid.com/downloads/" "xvidcore-1.3.7.tar.bz2" "YES" "YES"
 
         # zimg
@@ -1873,13 +1893,13 @@ main() {
         # pocketsphinx
         install_package "pocketsphinx" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/cmusphinx/pocketsphinx.git" "main" "YES" "YES"
 
-        # libgpg-error
-        install_package "libgpg-error" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgpg-error/" "libgpg-error-1.51.tar.bz2" "YES" "YES"
+        # libgpg-error (versioned)
+        install_package "libgpg-error" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgpg-error/" "libgpg-error-1.55.tar.bz2" "YES" "YES"
 
-        # libgcrypt
-        install_package "libgcrypt" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgcrypt/" "libgcrypt-1.10.3.tar.bz2" "YES" "YES"
+        # libgcrypt (versioned)
+        install_package "libgcrypt" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgcrypt/" "libgcrypt-1.11.1.tar.bz2" "YES" "YES"
 
-        # libcdio
+        # libcdio (versioned)
         install_package "libcdio" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libcdio/" "libcdio-2.1.0.tar.bz2" "YES" "YES"
 
         # libcdio-paranoia
@@ -2014,19 +2034,19 @@ main() {
         # boost - cmake
         install_package "boost" "cmake" "" "" "" "git" "https://github.com/boostorg/boost.git" "master" "YES" "YES"
 
-        # ragel
+        # ragel (versioned)
         install_package "ragel" "configure" "" "" "" "https" "https://www.colm.net/files/ragel/" "ragel-6.10.tar.gz" "YES" "YES"
 
         # libdnet - cmake
         install_package "libdnet" "cmake" "" "" "" "git" "https://github.com/ofalk/libdnet.git" "master" "YES" "YES"
 
-        # help2man
+        # help2man (versioned)
         install_package "help2man" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/help2man/" "help2man-1.49.3.tar.xz" "YES" "YES"
 
-        # flex
+        # flex (versioned)
         install_package "flex" "configure" "" "" "" "https" "https://github.com/westes/flex/releases/download/v2.6.4/" "flex-2.6.4.tar.gz" "YES" "YES"
 
-        # luajit -
+        # luajit (v2) -
         install_package "luajit" "make_only" "" "" "" "git" "https://luajit.org/git/luajit.git" "v2.1" "YES" "YES"
 
         # snort - cmake
@@ -2041,6 +2061,36 @@ main() {
 
         # pyright - python
         install_package "pyright" "pip"
+
+        # brotli - python
+        install_package "brotli" "pip"
+
+        # charset-normalizer - python
+        install_package "charset-normalizer" "pip"
+
+        # idna - python
+        install_package "idna" "pip"
+
+        # mutagen - python
+        install_package "mutagen" "pip"
+
+        # pycryptodomex - python
+        install_package "pycryptodomex" "pip"
+
+        # requests - python
+        install_package "requests" "pip"
+
+        # urllib3 - python
+        install_package "urllib3" "pip"
+
+        # websockets - python
+        install_package "websockets" "pip"
+
+        # curl_cffi - python
+        install_package "curl_cffi" "pip"
+
+        # yt-dlp - python
+        install_package "yt-dlp" "pip"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
