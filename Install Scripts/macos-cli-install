@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-VERSION="1.17"
+VERSION="1.18"
 SKIPTIME="864000"
 SPINNER_INTERVAL=0.4
 SPINNER_PLAIN_INTERVAL=1
@@ -99,7 +99,7 @@ print_status() {
     if [[ $PLAIN_TEXT == ON ]]; then
         print -n "\n[$2]: ($local_time) $1 - $3 " > /dev/tty
     else
-        printf "\033[2;5H $FANCY_COLOR_BEGIN %-21s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$1" "$3" > /dev/tty
+        printf "\033[2;5H$FANCY_COLOR_BEGIN %-21s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$1" "$3" > /dev/tty
     fi
 }
 
@@ -173,25 +173,25 @@ monitor_activity() {
         if [[ $? ]]; then
             if (( elapsed_time < 1)); then
                 if (( spin == 0 )); then
-                    print -n "\033[2;52H$FANCY_COLOR_SPIN_1 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
+                    print -n "\033[2;52H$FANCY_COLOR_SPIN_1 ⏺ $FANCY_COLOR_TIME$(elapsed_time) $FANCY_COLOR_END\033[2;1H\n" > /dev/tty
                     spin=1
                 else
-                    print -n "\033[2;52H$FANCY_COLOR_SPIN_2 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
+                    print -n "\033[2;52H$FANCY_COLOR_SPIN_2 ⏺ $FANCY_COLOR_TIME$(elapsed_time) $FANCY_COLOR_END\033[2;1H\n" > /dev/tty
                     spin=0
                 fi
             elif (( elapsed_time < 2)); then
-                print -n "\033[2;52H$FANCY_COLOR_SPIN_2 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
+                print -n "\033[2;52H$FANCY_COLOR_SPIN_2 ⏺ $FANCY_COLOR_TIME$(elapsed_time) $FANCY_COLOR_END\033[2;1H\n" > /dev/tty
             elif (( elapsed_time < 3)); then
-                print -n "\033[2;52H$FANCY_COLOR_SPIN_3 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
+                print -n "\033[2;52H$FANCY_COLOR_SPIN_3 ⏺ $FANCY_COLOR_TIME$(elapsed_time) $FANCY_COLOR_END\033[2;1H\n" > /dev/tty
             elif (( elapsed_time < 4)); then
-                print -n "\033[2;52H$FANCY_COLOR_SPIN_4 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
+                print -n "\033[2;52H$FANCY_COLOR_SPIN_4 ⏺ $FANCY_COLOR_TIME$(elapsed_time) $FANCY_COLOR_END\033[2;1H\n" > /dev/tty
             elif (( elapsed_time < 5)); then
-                print -n "\033[2;52H$FANCY_COLOR_SPIN_5 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
+                print -n "\033[2;52H$FANCY_COLOR_SPIN_5 ⏺ $FANCY_COLOR_TIME$(elapsed_time) $FANCY_COLOR_END\033[2;1H\n" > /dev/tty
             else
-                print -n "\033[2;52H$FANCY_COLOR_SPIN_5 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
+                print -n "\033[2;52H$FANCY_COLOR_SPIN_5 ⏺ $FANCY_COLOR_TIME$(elapsed_time) $FANCY_COLOR_END\033[2;1H\n" > /dev/tty
             fi
         else
-            print -n "\033[2;52H$FANCY_COLOR_SPIN_5 ⏺ $FANCY_COLOR_TIME$(elapsed_time)\033[2;1H\n" > /dev/tty
+            print -n "\033[2;52H$FANCY_COLOR_SPIN_5 ⏺ $FANCY_COLOR_TIME$(elapsed_time) $FANCY_COLOR_END\033[2;1H\n" > /dev/tty
         fi
         sleep $SPINNER_INTERVAL
     done
@@ -475,6 +475,65 @@ EOF
 patch_ffmpeg() {
     local package=$1
     local diff_filename=$2
+        if [[ ! -f "${diff_filename}_2" ]]; then
+            tee "${diff_filename}_2" > /dev/null << EOF
+diff --git a/libavfilter/af_asr.c b/libavfilter/af_asr.c
+index 8e8eeb19a7..bba793cfb5 100644
+--- a/libavfilter/af_asr.c
++++ b/libavfilter/af_asr.c
+@@ -41,7 +41,7 @@ typedef struct ASRContext {
+     char *logfn;
+
+     ps_decoder_t *ps;
+-    cmd_ln_t *config;
++    ps_config_t *config;
+
+     int utt_started;
+ } ASRContext;
+@@ -100,16 +100,16 @@ static av_cold int asr_init(AVFilterContext *ctx)
+     ASRContext *s = ctx->priv;
+     const float frate = s->rate;
+     char *rate = av_asprintf("%f", frate);
+-    const char *argv[] = { "-logfn",    s->logfn,
+-                           "-hmm",      s->hmm,
+-                           "-lm",       s->lm,
+-                           "-lmctl",    s->lmctl,
+-                           "-lmname",   s->lmname,
+-                           "-dict",     s->dict,
+-                           "-samprate", rate,
+-                           NULL };
+-
+-    s->config = cmd_ln_parse_r(NULL, ps_args(), 14, (char **)argv, 0);
++
++    s->config = ps_config_init(NULL);
++    ps_config_set_str(s->config, "logfn", s->logfn);
++    ps_config_set_str(s->config, "hmm", s->hmm);
++    ps_config_set_str(s->config, "lm", s->lm);
++    ps_config_set_str(s->config, "lmctl", s->lmctl);
++    ps_config_set_str(s->config, "lmname", s->lmname);
++    ps_config_set_str(s->config, "dict", s->dict);
++    ps_config_set_str(s->config, "samprate", rate);
++
+     av_free(rate);
+     if (!s->config)
+         return AVERROR(ENOMEM);
+@@ -160,7 +160,7 @@ static av_cold void asr_uninit(AVFilterContext *ctx)
+
+     ps_free(s->ps);
+     s->ps = NULL;
+-    cmd_ln_free_r(s->config);
++    ps_config_free(s->config);
+     s->config = NULL;
+ }
+
+EOF
+         fi
+         git apply "${diff_filename}_2"
+}
+
+patch_ffmpeg_x() {
+    local package=$1
+    local diff_filename=$2
     if [[ ! -f $diff_filename ]]; then
         tee "$diff_filename" > /dev/null << EOF
 diff --git a/libavdevice/opengl_enc.c b/libavdevice/opengl_enc.c
@@ -548,6 +607,56 @@ EOF
          fi
          git apply "${diff_filename}_2"
 }
+
+patch_bochs() {
+    local package=$1
+    local diff_filename=$2
+    if [[ ! -f $diff_filename ]]; then
+        tee "$diff_filename" > /dev/null << EOF
+diff --git a/bochs/gui/keymap.cc b/bochs/gui/keymap.cc
+index 930d9fd22..4d33f4533 100644
+--- a/bochs/gui/keymap.cc
++++ b/bochs/gui/keymap.cc
+@@ -30,10 +30,6 @@
+ #include "gui.h"
+ #include "keymap.h"
+
+-#if defined(__APPLE__)
+-#include <libgen.h>
+-#endif
+-
+ // Table of bochs "BX_KEY_*" symbols
+ // the table must be in BX_KEY_* order
+ const char *bx_key_symbol[BX_KEY_NBKEYS] = {
+EOF
+    fi
+    git apply "${diff_filename}"
+}
+
+patch_mdcat() {
+    local package=$1
+    local diff_filename=$2
+    if [[ ! -f $diff_filename ]]; then
+        tee "$diff_filename" > /dev/null << 'EOF'
+diff --git a/pulldown-cmark-mdcat/src/terminal/osc.rs b/pulldown-cmark-mdcat/src/terminal/osc.rs
+index 8fa2db6..dc2a2da 100644
+--- a/pulldown-cmark-mdcat/src/terminal/osc.rs
++++ b/pulldown-cmark-mdcat/src/terminal/osc.rs
+@@ -20,9 +20,6 @@ pub fn write_osc<W: Write + ?Sized>(writer: &mut W, command: &str) -> Result<()>
+     Ok(())
+ }
+
+-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+-pub struct Osc8Links;
+-
+ /// Whether the given `url` needs to get an explicit host.
+ ///
+ /// [OSC 8] links require that `file://` URLs give an explicit hostname, as
+EOF
+    fi
+    git apply "${diff_filename}"
+}
+
 
 # PKG for builtins
 # ==============================================================================
@@ -856,6 +965,8 @@ install_configure() {
             cd "$source_directory"
             if [[ -f "${source_directory}/$configure_builder" ]]; then
                 eval "${source_directory}/$configure_builder"
+            elif [[ -f "${source_directory}/configure.ac" ]]; then
+                autoreconf --force --install
             fi
             cd "$build_directory"
             if [[ -f "${source_directory}/configure" ]]; then
@@ -1009,11 +1120,14 @@ install_prebuilt() {
 install_pip() {
     local package="$1"
     if [[ $INSTALL_COMMAND == "install" ]]; then
-        print_status $package "INFO" "Installing"
         sudo_check
-        # to compile instead of prebuilt, pip3 install --no-binary :all: --upgrade "$package"
-        sudo -H $SCRIPT_PYTHONPATH/pip3 install --no-binary :all: --upgrade "$package"
-        # sudo $SCRIPT_PYTHONPATH/pip3 install --upgrade "$package"
+        if [[ $2 == "binary" ]]; then
+            print_status $package "INFO" "Installing"
+            sudo $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"
+        else
+            print_status $package "INFO" "Compiling"
+            sudo -H $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --no-binary :all: --upgrade "$package"
+        fi
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         if [[ $package != "pip" ]]; then
             print_status $package "WARN" "Uninstalling"
@@ -1135,7 +1249,7 @@ install_custom_angle() {
         print_status $package "INFO" "Fetching"
         fetch angle || gclient sync
         print_status $package "INFO" "Configuring"
-        gn gen --args=is_debug=false $build_directory/Release
+        gn gen --args=is_debug=false --args=use_siso=false $build_directory/Release
         print_status $package "INFO" "Building"
         autoninja -C $build_directory/Release
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
@@ -1196,7 +1310,7 @@ install_package() {
                 install_meson "$package" "$4" "$source_directory" "$build_directory"
                 ;;
             pip)
-                install_pip "$package"
+                install_pip "$package" "$3"
                 ;;
             cargo)
                 install_cargo "$package" "$3" "$4" "$source_directory" "$build_directory"
@@ -1358,6 +1472,16 @@ pre_patch() {
                 curl -sOL https://github.com/VectorCamp/vectorscan/commit/d9ebb20010b3f90a7a5c7bf4a5edff2eb58f2a4f.patch
                 patch -ruN -d ${2} < d9ebb20010b3f90a7a5c7bf4a5edff2eb58f2a4f.patch
                 ;;
+            bochs)
+                print_status $package "INFO" "Patching"
+                cd "$source_directory"
+                patch_bochs "$package" "$source_directory/local_install.patch"
+                ;;
+            mdcat)
+                print_status $package "INFO" "Patching"
+                cd "$source_directory"
+                patch_mdcat "$package" "$source_directory/local_install.patch"
+                ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
@@ -1376,6 +1500,10 @@ post_patch() {
                 print_status $package "INFO" "Sym-linking"
                 sudo ln -sf $INSTALL_PREFIX/bin/pkgconf $INSTALL_PREFIX/bin/pkg-config
                 sudo ln -sf $INSTALL_PREFIX/share/man/man1/pkgconf $INSTALL_PREFIX/share/man/man1/pkg-config.1
+                ;;
+            gnufortran)
+                print_status $package "INFO" "Sym-linking"
+                sudo ln -sf $INSTALL_PREFIX/bin/gnufortran $INSTALL_PREFIX/bin/gfortran
                 ;;
             cpython)
                 ;;
@@ -1440,6 +1568,19 @@ main() {
         install_pkg_lffi
         install_pkg_ncurses
         install_pkg_ncursesw
+
+        # libunistring -
+        export am_cv_func_iconv_works=yes
+        install_package "libunistring" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libunistring/" "libunistring-latest.tar.xz" "YES" "YES"
+
+        # gettext (versioned) - libunistring, libxml2 (mac), ncurses (mac)
+        install_package "gettext" "configure" "" "--disable-csharp --with-included-gettext --with-included-glib --with-included-libcroco --with-emacs" "" "https" "https://ftp.gnu.org/gnu/gettext/" "gettext-0.25.1.tar.xz" "YES" "YES"
+
+        # libidn2
+        install_package "libidn2" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libidn/" "libidn2-latest.tar.gz" "YES" "YES"
+
+        # texinfo (versioned)
+        install_package "texinfo" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/texinfo/" "texinfo-7.2.tar.xz" "YES" "YES"
 
         # gdbm -
         install_package "gdbm" "configure_in_source" "./autogen.sh" "--enable-libgdbm-compat --without-readline" "" "git" "https://git.savannah.gnu.org/git/gdbm.git" "master" "YES" "YES"
@@ -1558,13 +1699,6 @@ main() {
         # tmux - autoconf, automake, libtool, pkgconf, libevent, ncurses, bison, utf8proc
         install_package "tmux" "configure" "./autogen.sh" "--enable-utf8proc CFLAGS=\"-Wl,-rpath,@loader_path/../lib\"" "" "git" "https://github.com/tmux/tmux.git" "master" "YES" "YES"
 
-        # libunistring -
-        export am_cv_func_iconv_works=yes
-        install_package "libunistring" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libunistring/" "libunistring-latest.tar.xz" "YES" "YES"
-
-        # gettext (versioned) - libunistring, libxml2 (mac), ncurses (mac)
-        install_package "gettext" "configure" "" "--disable-csharp --with-included-gettext --with-included-glib --with-included-libcroco --with-emacs" "" "https" "https://ftp.gnu.org/gnu/gettext/" "gettext-0.25.1.tar.xz" "YES" "YES"
-
         # black - python
         install_package "black" "pip"
 
@@ -1574,14 +1708,14 @@ main() {
         # pylint - python
         install_package "pylint" "pip"
 
+        # rust (beta)
+        install_package "rust-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-beta-aarch64-apple-darwin.tar.xz" "YES" "YES"
+
         # tree-sitter-cli - rust
         install_package "tree-sitter-cli" "cargo" "" "" "/crates/cli" "git" "https://github.com/tree-sitter/tree-sitter.git" "master" "YES" "YES"
 
         # neovim - cmake, internal dependencies built
         install_package "neovim" "make_only" "" "CMAKE_BUILD_TYPE=Release" "" "git" "https://github.com/neovim/neovim.git" "master" "YES" "YES"
-
-        # rust (beta)
-        install_package "rust-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-beta-aarch64-apple-darwin.tar.xz" "YES" "YES"
 
         # helix - rust
         export HELIX_DEFAULT_RUNTIME="$INSTALL_PREFIX/libexec/helix/runtime"
@@ -1666,6 +1800,24 @@ main() {
         # glib - meson
         install_package "glib" "meson" "" "-Dselinux=disabled -Ddtrace=disabled -Dsystemtap=disabled -Dbsymbolic_functions=false -Dintrospection=enabled -Dtests=false" "" "git" "https://gitlab.gnome.org/GNOME/glib.git" "main" "YES" "YES"
 
+        # markdown - python
+        install_package "markdown" "pip"
+
+        # typogrify - python
+        install_package "typogrify" "pip"
+
+        # jinja2 - python
+        install_package "jinja2" "pip"
+
+        # markupsafe - python
+        install_package "markupsafe" "pip"
+
+        # packaging - python
+        install_package "packaging" "pip"
+
+        # pygments - python
+        install_package "pygments" "pip"
+
         # gdk-pixbuf
         export LDFLAGS=""
         install_package "gdk-pixbuf" "meson" "" "" "" "git" "https://gitlab.gnome.org/GNOME/gdk-pixbuf.git" "master" "YES" "YES"
@@ -1683,16 +1835,33 @@ main() {
         install_package "pango" "meson" "" "-Dintrospection=enabled -Dfontconfig=enabled -Dcairo=enabled -Dfreetype=enabled -Dbuild-testsuite=false" "" "git" "https://gitlab.gnome.org/GNOME/pango.git" "main" "YES" "YES"
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
-        # dbus
-        install_package "dbus" "cmake" "" "" "" "git" "https://gitlab.freedesktop.org/dbus/dbus.git" "main" "YES" "YES"
+        # dbus (git check pid fix)
+        install_package "dbus" "cmake" "" "" "" "https" "https://dbus.freedesktop.org/releases/dbus/" "dbus-1.16.2.tar.xz" "YES" "YES"
+        # install_package "dbus" "cmake" "" "" "" "git" "https://gitlab.freedesktop.org/dbus/dbus.git" "main" "YES" "YES"
 
-        # at-spi2-core - meson
+        # at-spi2-core - meson (missing timersub)
         export LDFLAGS="-Wl,-rpath,$INSTALL_PREFIX/lib"
-        install_package "at-spi2-core" "meson" "" "" "" "git" "https://gitlab.gnome.org/GNOME/at-spi2-core.git" "main" "YES" "YES"
+        install_package "at-spi2-core" "meson" "" "" "" "https" "https://download.gnome.org/sources/at-spi2-core/2.56/" "at-spi2-core-2.56.3.tar.xz" "YES" "YES"
+        # install_package "at-spi2-core" "meson" "" "" "" "git" "https://gitlab.gnome.org/GNOME/at-spi2-core.git" "main" "YES" "YES"
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # chafa - pkgconf, cairo, freetype, glib, jpeg-turbo, jpeg-xl, libavif, librsvg, libtiff, webp, gdk-pixbuf, gettext
         install_package "chafa" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/hpjansson/chafa.git" "master" "YES" "YES"
+
+        # gmp (versioned)
+        install_package "gmp" "configure" "" "" "" "https" "https://gmplib.org/download/gmp/" "gmp-6.3.0.tar.xz" "YES" "YES"
+
+        # mpfr
+        install_package "mpfr" "configure_in_source" "./autogen.sh" "" "" "git" "https://gitlab.inria.fr/mpfr/mpfr.git" "master" "YES" "YES"
+
+        # mpc
+        install_package "mpc" "configure" "" "" "" "git" "https://gitlab.inria.fr/mpc/mpc.git" "master" "YES" "YES"
+
+        # gnufortran (versioned) - ()
+        # alternative is flang from llvm, but it is large download. this is gcc, but we dont want c or c++
+        # install_package "gnufortran" "configure" "" "--enable-languages=fortran --disable-multilib --enable-lto --without-headers --program-prefix=gnu" "" "https" "https://ftp.gnu.org/gnu/gcc/gcc-15.1.0/" "gcc-15.1.0.tar.xz" "YES" "YES"
+        # gfortran (versioned) https://mac.r-project.org/tools/gfortran-14.2-universal.pkg
+        # install_package "gfortran" "prebuilt" "" "" "/local" "https" "https://mac.r-project.org/tools/" "gfortran-14.2-darwin20-r2-universal.tar.xz" "YES" "YES"
 
         # gtk
         install_package "gtk" "meson" "" "-Dx11-backend=false -Dmacos-backend=true -Dvulkan=disabled -Dmedia-gstreamer=disabled -Dbuild-examples=false -Dbuild-tests=false -Dintrospection=enabled" "" "git" "https://gitlab.gnome.org/GNOME/gtk.git" "main" "YES" "YES"
@@ -1735,20 +1904,11 @@ main() {
         # fastfetch
         install_package "fastfetch" "cmake" "" "" "" "git" "https://github.com/fastfetch-cli/fastfetch.git" "dev" "YES" "YES"
 
-        # gmp (versioned)
-        install_package "gmp" "configure" "" "" "" "https" "https://gmplib.org/download/gmp/" "gmp-6.3.0.tar.xz" "YES" "YES"
-
         # nettle (versioned)
         install_package "nettle" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/nettle/" "nettle-3.10.2.tar.gz" "YES" "YES"
 
         # unbound
         install_package "unbound" "configure" "" "--with-libexpat=$SDK_PATH/usr --with-libevent" "" "git" "https://github.com/NLnetLabs/unbound.git" "master" "YES" "YES"
-
-        # libidn2
-        install_package "libidn2" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libidn/" "libidn2-latest.tar.gz" "YES" "YES"
-
-        # texinfo (versioned)
-        install_package "texinfo" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/texinfo/" "texinfo-7.2.tar.xz" "YES" "YES"
 
         # p11-kit
         install_package "p11-kit" "meson" "" "" "" "git" "https://github.com/p11-glue/p11-kit.git" "master" "YES" "YES"
@@ -1931,7 +2091,7 @@ main() {
         install_package "mako" "pip"
 
         # mesa
-        install_package "mesa" "meson" "" "-Dllvm=disabled -Dshared-llvm=disabled -Dcpp_rtti=false -Dplatforms=macos -Dosmesa=true -Dgallium-drivers=softpipe -Dglx=disabled" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
+        install_package "mesa" "meson" "" "-Dllvm=disabled -Dshared-llvm=disabled -Dcpp_rtti=false -Dplatforms=macos -Dgallium-drivers=softpipe -Dglx=disabled" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
 
         # depot_tools
         install_package "depot_tools" "custom" "" "" "" "git" "https://chromium.googlesource.com/chromium/tools/depot_tools.git" "main" "YES" "YES"
@@ -1984,7 +2144,6 @@ main() {
                 --enable-pci \
                 --enable-usb \
                 --enable-usb-ohci \
-                --enable-port-e9-hack \
                 --with-sdl2 \
             " "/bochs" "git" "https://github.com/bochs-emu/Bochs.git" "master" "YES" "YES"
 
@@ -2014,7 +2173,8 @@ main() {
         install_package "seaborn" "pip"
 
         # scikit-learn - python
-        install_package "scikit-learn" "pip"
+        # binary avoids installing a fortran compiler
+        install_package "scikit-learn" "pip" "binary"
 
         # torch - python
         install_package "torch" "pip"
