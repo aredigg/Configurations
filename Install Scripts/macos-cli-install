@@ -2252,6 +2252,9 @@ main() {
         # yt-dlp - python
         install_package "yt-dlp" "pip"
 
+        # openai-whisper - python
+        install_package "openai-whisper" "pip"
+
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
             install_package "cpython" "configure" "" "LDFLAGS_NODIST=\"-Wl,-rpath,@loader_path/../lib\" --enable-framework --enable-optimizations --with-lto --with-dbmliborder=ndbm --enable-ipv6 --with-system-expat --with-system-libmpdec" "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES"
