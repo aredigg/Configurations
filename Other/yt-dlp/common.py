@@ -5,7 +5,7 @@ import re
 import yt_dlp
 from yt_dlp.YoutubeDL import YoutubeDL
 
-YTDLP_COMMON_VERSION = "1.00"
+YTDLP_COMMON_VERSION = "1.02"
 YTDLP_OUTDIR = ".ytdlp"
 YTDLP_HOMEDIR = f"{YTDLP_OUTDIR}/home"
 YTDLP_TEMPDIR = f"{YTDLP_OUTDIR}/temp"
@@ -111,8 +111,13 @@ def progress_hook(d):
         divider = 10
         denominator = "KB"
     if d.get("status") == "downloading":
-        dl = (d.get("downloaded_bytes") or 0) >> divider
-        tl = (d.get("total_bytes") or dl) >> divider
+        dl = int(d.get("downloaded_bytes") or 0) >> divider
+        tl = int(d.get("total_bytes") or dl) >> divider
+        if tl == 0:
+            pct = float(d.get("_percent") or 0)
+            dlt = float(d.get("downloaded_bytes") or 0)
+            if pct > 0:
+                tl = int((dlt * 100) / pct) >> divider
         sp = int(d.get("speed") or 0) >> divider
         sz = len(str(tl))
         eta = int(d.get("eta") or 0)
@@ -182,6 +187,10 @@ def process_channel(ydl: YoutubeDL, url: str, progress=None):
                 if formats:
                     # 1716 is Cinemascope (2160), 1644 is Cinemawide (21:9), 2160, 4320
                     # Technically just heights, but we don't use it to anything practical now
+                    resolution = "LR"
+                    has_720 = any(fmt.get("height", 0) >= 720 for fmt in formats if fmt.get('height') is not None)
+                    has_1080 = any(fmt.get("height", 0) >= 1080 for fmt in formats if fmt.get('height') is not None)
+                    has_1440 = any(fmt.get("height", 0) >= 1440 for fmt in formats if fmt.get('height') is not None)
                     has_cinemascope = any(fmt.get("height", 0) >= 1644 for fmt in formats if fmt.get('height') is not None)
                     has_cinemawide = any(fmt.get("height", 0) >= 1716 for fmt in formats if fmt.get('height') is not None)
                     has_4k = any(fmt.get("height", 0) >= 2160 for fmt in formats if fmt.get('height') is not None)
@@ -189,6 +198,24 @@ def process_channel(ydl: YoutubeDL, url: str, progress=None):
                     has_8k = any(fmt.get("height", 0) >= 4320 for fmt in formats if fmt.get('height') is not None)
                     has_8k_mp4 = any(fmt.get("height", 0) >= 4320 and fmt.get("ext") == "mp4" for fmt in formats if fmt.get('height') is not None)
                     is_vertical = any(fmt['height'] > fmt['width'] for fmt in formats if fmt.get('height') is not None and fmt.get('width') is not None and fmt.get('height', 0) != 0 and fmt.get('width', 0) != 0)
+                    if has_8k_mp4:
+                        resolution = "8K (MP4)"
+                    elif has_8k:
+                        resolution = "8K"
+                    elif has_4k_mp4:
+                        resolution = "4K (MP4)"
+                    elif has_4k:
+                        resolution = "4K"
+                    elif has_cinemawide:
+                        resolution = "Cinemawide"
+                    elif has_cinemascope:
+                        resolution = "Cinemascope"
+                    elif has_1440:
+                        resolution = "Gaming"
+                    elif has_1080:
+                        resolution = "HD 2K"
+                    elif has_720:
+                        resolution = "HD"
                     duration = int(info.get("duration") or 0)
                     hr = int(duration / 3600)
                     mn = int((duration / 60) % 60)
@@ -199,9 +226,8 @@ def process_channel(ydl: YoutubeDL, url: str, progress=None):
                     else:
                         category = "Unknown"
                     if not is_vertical:
-                        yprint("I", f"8K: {has_8k} 8K-MP4: {has_8k_mp4} 4K: {has_4k} 4K-MP4: {has_4k_mp4} Cinemascope: {has_cinemascope} Cinemawide: {has_cinemawide} VERTICAL: {is_vertical}")
                         yprint("I", f"CHANNEL: {info.get("channel")} UPLOADER: {info.get("uploader")} UPLOADER_ID: {info.get("uploader_id")}")
-                        yprint("I", f"DURATION: {hr:02}:{mn:02}:{sc:02} LIVE: {info.get("live_status")} AGE_LIMIT: {info.get("age_limit")} CATEGORY: {category}")
+                        yprint("I", f"{resolution} DURATION: {hr:02}:{mn:02}:{sc:02} LIVE: {info.get("live_status")} AGE_LIMIT: {info.get("age_limit")} CATEGORY: {category}")
                         availability = info.get("availability")
                         if availability == "public":
                             pprint("\033[5mDownloading (Availability: Public)…\033[0m")
@@ -258,11 +284,14 @@ class Logger:
         elif err_msg == "unable to download video data: HTTP Error 403: Forbidden":
             yprint("E", "403 Forbidden")
             sleep_now(7200)
+        elif err_msg == "[download] Got error: HTTP Error 403: Forbidden":
+            yprint("E", "403 Forbidden")
+            sleep_now(7200)
         elif err_msg == "[download] Got error: HTTP Error 503: Service Unavailable. Giving up after 2 retries":
             yprint("E", "503 Service Unavailable")
             sleep_now(120)
         else:
-            yprint("E", f"{err_msg}")
+            yprint("E", f" ** {err_msg}")
         if err_msg not in self.error_messages:
             self.error_messages.append(err_msg)
 
@@ -291,13 +320,18 @@ def parse_error(msg):
         return "Offline", 0, False
     elif msg == "Performer is currently away":
         return "Performer away", 0, False
+    elif msg == "Unable to download webpage: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1028) (caused by CertificateVerifyError('[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1028)')); please report this issue on https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm you are on the latest version using yt-dlp -U":
+        return "Certificate verify fail", 0, False
     else:
         pattern = re.compile(r"\[download\] Got error: \d+ bytes read, \d+ more expected\. Giving up after \d+ retries")
         if pattern.fullmatch(msg):
             return "Download timed out", 0, False
+        pattern = re.compile(r"\[download\] Got error: HTTPSConnectionPool\(host='[^']+', port=\d+\): .*?\. Giving up after \d+ retries")
+        if pattern.fullmatch(msg):
+            return "Download host error", 0, False
     return "Unknown", 0, False
 
-# unable to download video data: HTTP Error 403: Forbidden
+#
 
 def rotate_channel_file(channel_file):
     with open(channel_file, "r+", encoding="utf-8") as f:

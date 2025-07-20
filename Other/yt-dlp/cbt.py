@@ -1,8 +1,8 @@
 import common
 import os
 
-YTDLP_CBT_VERSION = "1.00"
-common.YTDLP_OUTDIR = ".cbt"
+YTDLP_CBT_VERSION = "1.01"
+common.YTDLP_OUTDIR = "/Volumes/Delt/Prosjekter/yt-dlp/.cbt"
 common.VERBOSE = 0b001011
 common.YTDLP_MB = True
 common.YTDLP_LIVE = False
@@ -19,12 +19,12 @@ def main():
     common.yprint("I", f"YT-DLP CBT {YTDLP_CBT_VERSION}")
     while main_loop:
         try:
-            channel_count = sum(1 for _ in open(f"{common.YTDLP_OUTDIR}/channels"))
-            if os.path.exists(f"{common.YTDLP_OUTDIR}/archived"):
-                os.remove(f"{common.YTDLP_OUTDIR}/archived")
+            channel_count = sum(1 for _ in open(f"{common.YTDLP_CHANNELSDIR}"))
+            if os.path.exists(f"{common.YTDLP_ARCHIVEDIR}"):
+                os.remove(f"{common.YTDLP_ARCHIVEDIR}")
             channel_loop = True
             while channel_loop:
-                archived_count = sum(1 for _ in open(f"{common.YTDLP_OUTDIR}/archived")) if os.path.isfile(f"{common.YTDLP_OUTDIR}/archived") else 0
+                archived_count = sum(1 for _ in open(f"{common.YTDLP_ARCHIVEDIR}")) if os.path.isfile(f"{common.YTDLP_ARCHIVEDIR}") else 0
                 common.yprint("I", f"YT-DLP CBT {common.run_ytdlp()}")
                 channel_loop = archived_count < channel_count
                 common.sleep_now(3600)
