@@ -1,0 +1,60 @@
+#!/bin/zsh
+if [[ $# -eq 0 ]]; then
+    print "Usage: $0 <directory>\n"
+    exit 1
+fi
+
+if ! command -v ffmpeg &> /dev/null; then
+    print "Error: Cannot find ffmpeg"
+    exit 1
+fi
+
+DIR="$1"
+
+if [[ ! -d "$DIR" ]]; then
+    print "Error: Directory '$DIR' does not exist"
+    exit 1
+fi
+
+print "Scanning $DIR"
+
+video_files=()
+while IFS= read -r -d '' file; do
+    video_files+=("$file")
+done < <(find "$DIR" -type f -iname "*.mp4" -print0)
+
+for file in "${video_files[@]}"; do
+    if [[ ! -f "$file" ]]; then
+        continue
+    fi
+    codec=$(ffprobe -v error -select_streams v:0 -show_entries \
+        stream=codec_name -of default=noprint_wrappers=1:nokey=1 \
+        "$file" 2>/dev/null)
+    printf "%-4s : $file\n" "$codec"
+    if [[ "$codec" == "vp9" ]] || [[ "$codec" == "vp09" ]]; then
+        dir=$(dirname "$file")
+        basename=$(basename "$file" .mp4)
+        output="${dir}/${basename}_h265.mp4"
+        if [[ -f "$output" ]]; then
+            print "  Skipping (already exists)"
+            continue
+        fi
+        echo "  Converting"
+        if ffmpeg -i "$file" -c:v hevc_videotoolbox -q:v 65 -tag:v hvc1 \
+            -c:a copy "$output" -y 2>/dev/null; then
+            orig_sz=$(stat -f%z "$file")
+            new_sz=$(stat -f%z "$output")
+            if [[ $new_sz -lt $orig_sz ]]; then
+                mv "$file" "${dir}/${basename}_old.mp4"
+                mv "$output" "$file"
+                print "  Converted and smaller"
+                rm "${dir}/${basename}_old.mp4"
+            else
+                print "  Converted but larger, keeping old"
+                rm "$output"
+            fi                
+        else
+            print "  Conversion failed"
+        fi
+    fi
+done
