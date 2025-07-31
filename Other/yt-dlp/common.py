@@ -5,7 +5,7 @@ import re
 import yt_dlp
 from yt_dlp.YoutubeDL import YoutubeDL
 
-YTDLP_COMMON_VERSION = "1.02"
+YTDLP_COMMON_VERSION = "1.12"
 YTDLP_OUTDIR = ".ytdlp"
 YTDLP_HOMEDIR = f"{YTDLP_OUTDIR}/home"
 YTDLP_TEMPDIR = f"{YTDLP_OUTDIR}/temp"
@@ -15,26 +15,28 @@ YTDLP_TEMP_ERRORS = f"{YTDLP_OUTDIR}/tmp_errors"
 VERBOSE = 0b001011
 YTDLP_MB = True
 YTDLP_LIVE = True
+YTDPL_VERT = False
+YTDLP_DESCRIPTION = False
 YTDLP_OUTTMPL = "%(channel)s/%(timestamp>%Y-%m)s/%(id)s.%(ext)s"
 
 def yprint(indicator, text):
     if indicator == "C" and (VERBOSE & 0b000001):
-        print(f"{datetime.datetime.now()} \033[1mINF\033[0m {text}")
+        print(f"{datetime.datetime.now()} \033[1mINF\033[0m {text}\033[0K")
     elif indicator == "I" and (VERBOSE & 0b000010):
-        print(f"{datetime.datetime.now()} \033[32mINF\033[39m {text}")
+        print(f"{datetime.datetime.now()} \033[32mINF\033[39m {text}\033[0K")
     elif indicator == "W" and (VERBOSE & 0b000100):
-        print(f"{datetime.datetime.now()} \033[33mWRN\033[39m {text}")
+        print(f"{datetime.datetime.now()} \033[33mWRN\033[39m {text}\033[0K")
     elif indicator == "E" and (VERBOSE & 0b001000):
-        print(f"{datetime.datetime.now()} \033[31mERR\033[39m {text}")
+        print(f"{datetime.datetime.now()} \033[31mERR\033[39m {text}\033[0K")
     elif indicator == "D" and (VERBOSE & 0b010000):
-        print(f"{datetime.datetime.now()} \033[34mDBG\033[39m {text}")
+        print(f"{datetime.datetime.now()} \033[34mDBG\033[39m {text}\033[0K")
     else:
         if VERBOSE & 0b100000:
-            print(f"{datetime.datetime.now()} \033[36m---\033[39m {text}")
+            print(f"{datetime.datetime.now()} \033[36m---\033[39m {text}\033[0K")
 
 def pprint(text):
     if VERBOSE > 0:
-        print(f"{text}\033[1F")
+        print(f"{text}\033[0K\033[1F")
 
 def run_ytdlp():
     # Common arguments
@@ -42,7 +44,7 @@ def run_ytdlp():
         "ignoreerrors": True,
         "live_from_start": YTDLP_LIVE,
         "multistreams": True,
-        "retries": 2,
+        "retries": 5,
         "sleep_interval": 10,
         "max_sleep_interval": 20,
         "sleep_interval_requests": 0.75,
@@ -53,7 +55,13 @@ def run_ytdlp():
         "cookiesfrombrowser": ('safari', None, None, None),
         "download_archive": f"{YTDLP_ARCHIVEDIR}",
         "outtmpl": f"{YTDLP_OUTTMPL}",
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=2160]+bestaudio/best",
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=1600]+bestaudio/best",
+        "writesubtitles": True,
+        "writeautomaticsub": False,
+        "subtitleslangs": ["all"],
+        "keep_fragments": True,
+        "writedescription": YTDLP_DESCRIPTION,
+        "writeinfojson": YTDLP_DESCRIPTION,
         "extractor_args": {
             "youtube": {
                 "player_client": ["default", "-tv", "web_safari", "web_embedded"]
@@ -96,9 +104,14 @@ def run_ytdlp():
     except BaseException as e:
         yprint("E", f"BaseException {str(e)}")
     # save error messages
-    with open(f"{YTDLP_TEMP_ERRORS}", "w", encoding="utf-8") as f:
+    with open(f"{YTDLP_TEMP_ERRORS}_ERR", "w", encoding="utf-8") as f:
         for msg in logger.error_messages:
             if msg and not msg.endswith("\n"):
+                msg += "\n"
+            f.write(msg)
+    with open(f"{YTDLP_TEMP_ERRORS}_PRS", "w", encoding="utf-8") as f:
+        for msg in logger.parse_messages:
+            if msg and not msg.endswith("\n"):  
                 msg += "\n"
             f.write(msg)
     return "Complete"
@@ -106,13 +119,15 @@ def run_ytdlp():
 def progress_hook(d):
     if YTDLP_MB:
         divider = 20
-        denominator = "MB"
+        dnm = "MB"
     else:
         divider = 10
-        denominator = "KB"
+        dnm = "KB"
     if d.get("status") == "downloading":
         dl = int(d.get("downloaded_bytes") or 0) >> divider
         tl = int(d.get("total_bytes") or dl) >> divider
+        if tl == 0:
+            tl = int(d.get("total_bytes_estimate") or dl) >> divider
         if tl == 0:
             pct = float(d.get("_percent") or 0)
             dlt = float(d.get("downloaded_bytes") or 0)
@@ -121,10 +136,20 @@ def progress_hook(d):
         sp = int(d.get("speed") or 0) >> divider
         sz = len(str(tl))
         eta = int(d.get("eta") or 0)
+        elp = int(d.get("elapsed") or 0)
         hr = int(eta / 3600)
         mn = int((eta / 60) % 60)
         sc = int(eta % 60)
-        pprint(f"Downloading {d.get("_percent"):3.0f}% ({dl:{sz}}/{tl}{denominator}) ETA {hr:02}:{mn:02}:{sc:02} {sp:{int((60/divider))}} {denominator}/s")
+        ehr = int(elp / 3600)
+        emn = int((elp / 60) % 60)   
+        esc = int(elp % 60)
+        fri = int(d.get("fragment_index") or 0)
+        frc = int(d.get("fragment_count") or 0)
+        frl = len(str(frc))
+        fltyp = d.get("filename").upper().split('.')[-1]
+        if len(fltyp) > 6:
+            fltyp = "UNK"
+        pprint(f"Downloading {fltyp} {d.get("_percent"):3.0f}% ({dl:{sz}}/{tl}{dnm}) ETA {hr:02}:{mn:02}:{sc:02} {sp:{int((60/divider))}} {dnm}/s FRAG[{fri:{frl}}/{frc}] AAT {ehr:02}:{emn:02}:{esc:02}")
     elif d.get("status") == "finished":
         yprint("I", f"Downloaded {d.get("filename")}")
     else:
@@ -170,7 +195,7 @@ def process_channel(ydl: YoutubeDL, url: str, progress=None):
                         if entry:
                             entry_url = entry.get("webpage_url") or entry.get("url")
                             if entry_url:
-                                pl = PLCounter(i, len(entries))
+                                pl = PLCounter(i+1, len(entries))
                                 process_channel(ydl, entry_url, pl)
             elif url_type == "url":
                 availability = info.get("availability")
@@ -198,6 +223,7 @@ def process_channel(ydl: YoutubeDL, url: str, progress=None):
                     has_8k = any(fmt.get("height", 0) >= 4320 for fmt in formats if fmt.get('height') is not None)
                     has_8k_mp4 = any(fmt.get("height", 0) >= 4320 and fmt.get("ext") == "mp4" for fmt in formats if fmt.get('height') is not None)
                     is_vertical = any(fmt['height'] > fmt['width'] for fmt in formats if fmt.get('height') is not None and fmt.get('width') is not None and fmt.get('height', 0) != 0 and fmt.get('width', 0) != 0)
+                    is_lowres = False
                     if has_8k_mp4:
                         resolution = "8K (MP4)"
                     elif has_8k:
@@ -211,21 +237,24 @@ def process_channel(ydl: YoutubeDL, url: str, progress=None):
                     elif has_cinemascope:
                         resolution = "Cinemascope"
                     elif has_1440:
-                        resolution = "Gaming"
+                        resolution = "2.5K"
                     elif has_1080:
                         resolution = "HD 2K"
                     elif has_720:
                         resolution = "HD"
+                    else:
+                        is_lowres = True
                     duration = int(info.get("duration") or 0)
                     hr = int(duration / 3600)
                     mn = int((duration / 60) % 60)
                     sc = int(duration % 60)
                     category = info.get("categories")
+                    retcode = None
                     if category:
                         category = category[0]
                     else:
                         category = "Unknown"
-                    if not is_vertical:
+                    if not is_vertical and not is_lowres:
                         yprint("I", f"CHANNEL: {info.get("channel")} UPLOADER: {info.get("uploader")} UPLOADER_ID: {info.get("uploader_id")}")
                         yprint("I", f"{resolution} DURATION: {hr:02}:{mn:02}:{sc:02} LIVE: {info.get("live_status")} AGE_LIMIT: {info.get("age_limit")} CATEGORY: {category}")
                         availability = info.get("availability")
@@ -238,9 +267,15 @@ def process_channel(ydl: YoutubeDL, url: str, progress=None):
                         else:
                             yprint("+", f"AVAILABILITY: {availability}")
                     else:
-                        yprint("E", f"Skipping {info.get("id")} because it is vertical")
-                        add_video_id(f"{YTDLP_ARCHIVEDIR}", f"{info.get("extractor")} {info.get("id")}")
-
+                        if YTDPL_VERT and not is_lowres:
+                            yprint("I", f"Vertical DURATION: {hr:02}:{mn:02}:{sc:02} CATEGORY: {category}")
+                            pprint(f"\033[5mDownloading (Availability: {info.get("availability")})…\033[0m")
+                            retcode = ydl.download([url])
+                        else:
+                            yprint("E", f"Skipping {info.get("id")} because it is vertical or low resolution")
+                            if is_vertical:
+                                add_video_id(f"{YTDLP_ARCHIVEDIR}", f"{info.get("extractor")} {info.get("id")}")
+                    yprint("D", f"Return code {retcode}")
     except Exception as e:
         if e and e.__traceback__:
             yprint("E", f"EXCEPTION {url} {str(e)}:{e.__traceback__.tb_lineno}")
@@ -250,6 +285,7 @@ def process_channel(ydl: YoutubeDL, url: str, progress=None):
 class Logger:
     def __init__(self):
         self.error_messages = []
+        self.parse_messages = []
 
     def debug(self, msg):
         yprint("D", f"{msg}")
@@ -284,16 +320,25 @@ class Logger:
         elif err_msg == "unable to download video data: HTTP Error 403: Forbidden":
             yprint("E", "403 Forbidden")
             sleep_now(7200)
-        elif err_msg == "[download] Got error: HTTP Error 403: Forbidden":
+        elif err_msg.startswith("[download] Got error: HTTP Error 403: Forbidden"):
             yprint("E", "403 Forbidden")
             sleep_now(7200)
-        elif err_msg == "[download] Got error: HTTP Error 503: Service Unavailable. Giving up after 2 retries":
+        elif err_msg.startswith("[download] Got error: HTTP Error 503: Service Unavailable"):
             yprint("E", "503 Service Unavailable")
             sleep_now(120)
+        elif err_msg.startswith("[download] Got error: timed out"):
+            yprint("E", "Timed out")
+            sleep_now(120)
+        elif err_msg.startswith("[download] Got error: The read operation timed out"):
+            yprint("E", "Read timed out")
+            sleep_now(120)
+        elif err_msg.startswith("[download] Got error: <urllib3.connection.HTTPSConnection object at 0x10c283610>: Failed to establish a new connection: [Errno 61] Connection refused."):
+            yprint("E", "Connection refused")
+            sleep_now(120)
         else:
-            yprint("E", f" ** {err_msg}")
-        if err_msg not in self.error_messages:
-            self.error_messages.append(err_msg)
+            yprint("E", f" \033[33m**\033[39m {err_msg}")
+            if err_msg not in self.error_messages:
+                self.error_messages.append(err_msg)
 
 def parse_error(msg):
     if msg == "This video is available to this channel's members on level: Tier 2 (or any higher level). Join this channel to get access to members-only content and other exclusive perks.":
@@ -307,9 +352,9 @@ def parse_error(msg):
     elif msg == "Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp for how to manually pass cookies. Also see https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies for tips on effectively exporting YouTube cookies":
         return "Authentication required (Cookies)", 3600, False
     elif msg == "Video unavailable. This content isn't available, try again later. Your account has been rate-limited by YouTube for up to an hour. It is recommended to use `-t sleep` to add a delay between video requests to avoid exceeding the rate limit. For more information, refer to https://github.com/yt-dlp/yt-dlp/wiki/Extractors#this-content-isnt-available-try-again-later":
-        return "Video unavailable due rate limitation", 14400, False
+        return "Video unavailable due rate limitation", 43200, False
     elif msg == "unable to download video data: HTTP Error 403: Forbidden":
-        return "Forbidden", 14400, False
+        return "Forbidden", 43200, False
     elif msg == "Hidden session in progress":
         return "Hidden", 0, False
     elif msg == "Room is currently in a private show":
@@ -317,21 +362,26 @@ def parse_error(msg):
     elif msg == "Room is password protected":
         return "Protected", 0, False
     elif msg == "Room is currently offline":
-        return "Offline", 0, False
+        return "Offline", 5, False
     elif msg == "Performer is currently away":
         return "Performer away", 0, False
     elif msg == "Unable to download webpage: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1028) (caused by CertificateVerifyError('[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1028)')); please report this issue on https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm you are on the latest version using yt-dlp -U":
         return "Certificate verify fail", 0, False
-    else:
-        pattern = re.compile(r"\[download\] Got error: \d+ bytes read, \d+ more expected\. Giving up after \d+ retries")
-        if pattern.fullmatch(msg):
-            return "Download timed out", 0, False
-        pattern = re.compile(r"\[download\] Got error: HTTPSConnectionPool\(host='[^']+', port=\d+\): .*?\. Giving up after \d+ retries")
-        if pattern.fullmatch(msg):
-            return "Download host error", 0, False
-    return "Unknown", 0, False
-
-#
+    elif msg == "Unable to download JSON metadata: HTTP Error 403: Forbidden (caused by <HTTPError 403: Forbidden>)":
+        return "JSON forbidden", 60, False
+    elif msg == "Did not get any data blocks":
+        return "No data blocks", 0, False
+    elif msg == "Failed to download m3u8 information: HTTP Error 404: Not Found (caused by <HTTPError 404: Not Found>)":
+        return "Not Found", 120, False
+    elif msg == "Failed to download m3u8 information: HTTP Error 502: Bad Gateway (caused by <HTTPError 502: Bad Gateway>)":
+        return "Bad Gateway", 120, False
+    elif msg == "Unable to download webpage: HTTP Error 429: Too Many Requests (caused by <HTTPError 429: Too Many Requests>)":
+        return "Too many requests", 120, False
+    elif msg.startswith("This live event will begin in"):
+        return "Future live event", 0, False
+    if msg not in self.parse_messages:
+        self.parse_messages.append(msg)
+    return "\033[33mUnknown\033[39m", 0, False
 
 def rotate_channel_file(channel_file):
     with open(channel_file, "r+", encoding="utf-8") as f:
@@ -363,3 +413,4 @@ def sleep_now(duration):
 yprint("I", f"YT-DLP COMMON {YTDLP_COMMON_VERSION}")
 if __name__ == "__main__":
     pass
+
