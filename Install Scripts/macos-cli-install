@@ -1684,7 +1684,9 @@ main() {
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # pip (only upgrade) - cpython
-        install_package "pip" "pip"
+        if [[ $INSTALL_COMMAND == "install" ]]; then
+            install_package "pip" "pip"
+        fi
 
         # sphinx - pip
         install_package "sphinx" "pip"
@@ -1740,6 +1742,9 @@ main() {
 
         # setuptools - python
         install_package "setuptools" "pip"
+
+        # wheel - python
+        install_package "wheel" "pip"
 
         # libpng - cmake, libtool, zlib (mac)
         install_package "libpng" "cmake" "" "" "" "git" "https://github.com/pnggroup/libpng.git" "master" "YES" "YES"
@@ -2115,6 +2120,9 @@ main() {
         # capstone
         install_package "capstone" "cmake" "" "" "" "git" "https://github.com/capstone-engine/capstone.git" "next" "YES" "YES"
 
+        # distlib
+        install_package "distlib" "pip"
+
         # qemu
         install_package "qemu" "configure" "" \
             " \
@@ -2158,7 +2166,7 @@ main() {
         install_package "jupyterlab" "pip"
 
         # voila - python
-        install_package "voila" "pip"
+        install_package "voila" "pip" "binary"
 
         # matplotlib - python
         install_package "matplotlib" "pip"
@@ -2253,10 +2261,14 @@ main() {
         install_package "yt-dlp" "pip"
 
         # openai-whisper - python
-        install_package "openai-whisper" "pip"
+        install_package "openai-whisper" "pip" "binary"
+
+        # postgresql
+        install_package "postgresql" "meson" "" "" "" "git" "https://git.postgresql.org/git/postgresql.git" "REL_17_STABLE" "YES" "YES"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
+            install_package "pip" "pip"
             install_package "cpython" "configure" "" "LDFLAGS_NODIST=\"-Wl,-rpath,@loader_path/../lib\" --enable-framework --enable-optimizations --with-lto --with-dbmliborder=ndbm --enable-ipv6 --with-system-expat --with-system-libmpdec" "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES"
         fi
 
