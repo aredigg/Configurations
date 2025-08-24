@@ -1574,7 +1574,7 @@ main() {
         install_package "libunistring" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libunistring/" "libunistring-latest.tar.xz" "YES" "YES"
 
         # gettext (versioned) - libunistring, libxml2 (mac), ncurses (mac)
-        install_package "gettext" "configure" "" "--disable-csharp --with-included-gettext --with-included-glib --with-included-libcroco --with-emacs" "" "https" "https://ftp.gnu.org/gnu/gettext/" "gettext-0.25.1.tar.xz" "YES" "YES"
+        install_package "gettext" "configure" "" "--disable-csharp --with-included-gettext --with-included-glib --with-included-libcroco --with-emacs" "" "https" "https://ftp.gnu.org/gnu/gettext/" "gettext-0.26.tar.xz" "YES" "YES"
 
         # libidn2
         install_package "libidn2" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libidn/" "libidn2-latest.tar.gz" "YES" "YES"
@@ -1660,7 +1660,7 @@ main() {
         install_package "tk" "configure" "" "--with-tcl=${BUILDS_DIRECTORY}/tcl --enable-aqua=yes" "/macosx" "https" "http://prdownloads.sourceforge.net/tcl/" "tk9.0.2-src.tar.gz" "YES" "YES"
 
         # mpdecimal (versioned) -
-        install_package "mpdecimal" "configure" "" "" "" "https" "https://www.bytereef.org/software/mpdecimal/releases/" "mpdecimal-4.0.0.tar.gz" "YES" "YES"
+        install_package "mpdecimal" "configure" "" "" "" "https" "https://www.bytereef.org/software/mpdecimal/releases/" "mpdecimal-4.0.1.tar.gz" "YES" "YES"
 
         # cpython (versioned) - git (xcode), pkgconf, openssl, xz, gdbm, tcl-tk, mpdecimal
         # Will also install into /Library/Framework/Python.framework and /Applications/Python version
@@ -1676,7 +1676,7 @@ main() {
                     --enable-ipv6 \
                     --with-system-expat \
                     --with-system-libmpdec \
-                " "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES" "v3.13.5"
+                " "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES" "v3.13.7"
         fi
         export SCRIPT_PYTHONPATH="$INSTALL_PREFIX/bin"
         export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:$PATH"
@@ -1725,7 +1725,7 @@ main() {
         add_rpath "$INSTALL_PREFIX/bin/hx" "@loader_path/../lib"
 
         # jdtls (versioned) - java, python
-        install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.48.0/" "jdt-language-server-1.48.0-202506271502.tar.gz" "YES" "NO"
+        install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.49.0/" "jdt-language-server-1.49.0-202507311558.tar.gz" "YES" "NO"
 
         # vhdl_ls
         install_package "vhdl_ls" "cargo" "/vhdl_ls" "" "" "git" "https://github.com/VHDL-LS/rust_hdl.git" "master" "YES" "YES"
@@ -1931,10 +1931,10 @@ main() {
         install_package "libass" "meson" "" "" "" "git" "https://github.com/libass/libass.git" "master" "YES" "YES"
 
         # libbluray (versioned)
-        install_package "libbluray" "configure" "" "--with-included-libtasn1 --with-included-unistring --disable-bdjava-jar" "" "https" "https://download.videolan.org/videolan/libbluray/1.3.4/" "libbluray-1.3.4.tar.bz2" "YES" "YES"
+        install_package "libbluray" "meson" "" "-Dbdj_jar=disabled -Dfontconfig=enabled -Dfreetype=enabled -Dlibxml2=enabled" "" "https" "https://download.videolan.org/videolan/libbluray/1.4.0/" "libbluray-1.4.0.tar.xz" "YES" "YES"
 
         # mpg123 (versioned)
-        install_package "mpg123" "configure" "" "" "" "https" "https://sourceforge.net/projects/mpg123/files/mpg123/1.33.0/" "mpg123-1.33.0.tar.bz2" "YES" "YES"
+        install_package "mpg123" "configure" "" "" "" "https" "https://sourceforge.net/projects/mpg123/files/mpg123/1.33.2/" "mpg123-1.33.2.tar.bz2" "YES" "YES"
 
         # lame (versioned)
         install_package "lame" "configure" "" "--disable-debug --enable-nasm" "" "https" "https://sourceforge.net/projects/lame/files/lame/3.100/" "lame-3.100.tar.gz" "YES" "YES"
@@ -2062,7 +2062,7 @@ main() {
         install_package "libgpg-error" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgpg-error/" "libgpg-error-1.55.tar.bz2" "YES" "YES"
 
         # libgcrypt (versioned)
-        install_package "libgcrypt" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgcrypt/" "libgcrypt-1.11.1.tar.bz2" "YES" "YES"
+        install_package "libgcrypt" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgcrypt/" "libgcrypt-1.11.2.tar.bz2" "YES" "YES"
 
         # libcdio (versioned)
         install_package "libcdio" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libcdio/" "libcdio-2.1.0.tar.bz2" "YES" "YES"
@@ -2263,8 +2263,8 @@ main() {
         # openai-whisper - python
         install_package "openai-whisper" "pip" "binary"
 
-        # postgresql
-        install_package "postgresql" "meson" "" "" "" "git" "https://git.postgresql.org/git/postgresql.git" "REL_17_STABLE" "YES" "YES"
+        # postgresql (versioned) https://git.postgresql.org/git/postgresql.git
+        install_package "postgresql" "meson" "" "" "" "git" "https://github.com/postgres/postgres.git" "REL_17_STABLE" "YES" "YES"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then

@@ -8,7 +8,7 @@ import os
 import yt_dlp
 from yt_dlp.YoutubeDL import YoutubeDL
 
-YTDLP_COMMON_VERSION = "1.20"
+YTDLP_COMMON_VERSION = "1.22"
 YTDLP_OUTDIR = ".ytdlp"
 YTDLP_HOMEDIR = f"{YTDLP_OUTDIR}/home"
 YTDLP_TEMPDIR = f"{YTDLP_OUTDIR}/temp"
@@ -192,6 +192,10 @@ def postprocessor_hook(d):
             if vcodec and acodec:
                 codec_string = f"{vcodec[:4]}/{acodec[:4]}"
             yprint("I", f"{operation[1]} {info.get("filename")} [{info.get("resolution")}@{info.get("fps")} ({info.get("aspect_ratio")}) {info.get("dynamic_range")} {codec_string}] ({info.get("duration")})")
+            # print("\033[38;5;8m" + str(info) + "\033[39m")
+            if operation[1] == "Moved":
+                sleep_time = random.randrange(min(max(info.get("duration") or 0, 1), 3600))
+                sleep_now(sleep_time >> 2)
         else:
             yprint("+", f"{d.get("status")} {info.get("resolution")}/{info.get("fps")} {info.get("dynamic_range")} {info.get("vcodec")} {info.get("acodec")} {info.get("aspect_ratio")} {d.get("postprocessor")}")
             yprint("+", f"{d.get("status")} {info.get("filename")}")
@@ -376,6 +380,12 @@ class Logger:
         elif err_msg.startswith("Unable to download video: [Errno 2] No such file or directory: "):
             yprint("E", "No such file or directory")
             sleep_now(1)
+        elif err_msg.startswith("Unable to rename file: [Errno 2] No such file or directory: "):
+            yprint("E", "No such file or directory")
+            sleep_now(1)
+        elif err_msg.startswith("[Errno 2] No such file or directory: "):
+            yprint("E", "No such file or directory")
+            sleep_now(1)
         elif err_msg.startswith("ffmpeg exited with code 254"):
             yprint("E", "ffmpeg: File not found")
             sleep_now(1)
@@ -437,6 +447,10 @@ class Logger:
             return "Members only", 0, True
         elif msg == "Video unavailable. Playback on other websites has been disabled by the video owner":
             return "Video disabled by owner", 0, True
+        elif msg == "Video unavailable":
+            return "Video unavailable", 0, False
+        elif msg == "Video unavailable. This content isn’t available.":
+            return "This content isn’t available.", 43200, False
         elif msg == "--live-from-start is passed, but there are no formats that can be downloaded from the start. If you want to download from the current time, use --no-live-from-start":
             return "Unable to live from start", 0, False
         elif msg == "Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp for how to manually pass cookies. Also see https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies for tips on effectively exporting YouTube cookies":
@@ -472,9 +486,7 @@ class Logger:
             return "Future live event", 0, False
         if msg not in self.parse_messages:
             self.parse_messages.append(msg)
-        return "\033[33mUnknown\033[39m", 0, False
-
-        # This video is available to this channel's members on level: Coding Master (or any higher level). Join this channel to get access to members-only content and other exclusive perks.
+        return "\033[33mUnknown\033[39m", 43200, False
 
 def rotate_channel_file(channel_file):
     with open(channel_file, "r+", encoding="utf-8") as f:
@@ -537,12 +549,14 @@ def add_hour_id(hour_file, video_id):
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 def sleep_now(duration):
+    if duration <= 0:
+        return
     duration += random.randrange(duration)
     hr = int(duration/3600)
     mn = int((duration%3600)/60)
     sc = int((duration%3600)%60)
     eta = datetime.datetime.now() + datetime.timedelta(seconds=duration)
-    if duration < 3600:
+    if duration < 1800:
         yprint("I", f"Sleeping for {hr:02}:{mn:02}:{sc:02}")
     else:
         yprint("I", f"Sleeping for {hr:02}:{mn:02}:{sc:02}, waking at {eta.strftime('%d %H:%M:%S (%A)')}")
