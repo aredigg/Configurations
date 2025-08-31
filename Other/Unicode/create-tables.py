@@ -108,9 +108,6 @@ def get_unicode_char(c):
 def main():
     blocks = parse_blocks()
     scripts = parse_scripts()
-    # print(get_script(0x1083, scripts))
-    # print(f" {chr(0x1000)} !")
-    # print(f" {chr(0x1000)}{chr(0x1083)}!")
     print("─"*(CHAR_COLUMNS*5+10))
     for b, e, d in blocks:
         if (b >> 16) != SELECTED_CODEPLANE:
@@ -128,8 +125,6 @@ def main():
             elif c == b:
                 print(f"{b-b%CHAR_COLUMNS:0{s}X} │", end="")
                 print(" "*(b%CHAR_COLUMNS*5), end="")
-#                pad = 10 if b > 0x10000 else 6
-#                print(" "*(b%CHAR_COLUMNS*5+pad), end="")
             print(f" {get_unicode_char(chr(c))} ", end="")
         print("\n" + "─"*(CHAR_COLUMNS*5+10))
 
