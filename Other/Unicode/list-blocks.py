@@ -276,7 +276,7 @@ UNICODE_BLOCKS = [
     (0x16FE0, 0x16FFF, "Ideographic Symbols and Punctuation"),
     (0x17000, 0x187FF, "Tangut"),
     (0x18800, 0x18AFF, "Tangut Components"),
-    (0x18800, 0x18CFF, "Khitan Small Script"),
+    (0x18B00, 0x18CFF, "Khitan Small Script"),
     (0x18D00, 0x18D7F, "Tangut Supplement"),
     (0x1AFF0, 0x1AFFF, "Kana Extended-B"),
     (0x1B000, 0x1B0FF, "Kana Supplement"),
@@ -339,26 +339,6 @@ UNICODE_BLOCKS = [
     (0xE0100, 0xE01EF, "Variation Selectors Supplement"),
     (0xF0000, 0xFFFFF, "Supplementary Private Use Area-A"),
     (0x100000, 0x10FFFF, "Supplementary Private Use Area-B")
-]
-
-UNICODE_PLANES = [
-    [*range(0x00000, 0x0FFFF)],     # Plane 0
-    [*range(0x10000, 0x1FFFF)],     # Plane 1
-    [*range(0x20000, 0x2FFFF)],     # Plane 2
-    [*range(0x30000, 0x3FFFF)],     # Plane 3
-    [*range(0x40000, 0x4FFFF)],
-    [*range(0x50000, 0x5FFFF)],
-    [*range(0x60000, 0x6FFFF)],
-    [*range(0x70000, 0x7FFFF)],
-    [*range(0x80000, 0x8FFFF)],
-    [*range(0x90000, 0x9FFFF)],
-    [*range(0xA0000, 0xAFFFF)],
-    [*range(0xB0000, 0xBFFFF)],
-    [*range(0xC0000, 0xCFFFF)],
-    [*range(0xD0000, 0xDFFFF)],
-    [*range(0xE0000, 0xEFFFF)],     # Plane 14
-    [*range(0xF0000, 0xFFFFF)],     # Plane 15
-    [*range(0x100000, 0x10FFFF)],   # Plane 16
 ]
 
 UNICODE_NONPRINTABLE = [
@@ -459,15 +439,10 @@ def add_spacer(c):
         spacer -= 1
     return " "*spacer
 
-def remove_spacer(c):
-    if c in UNICODE_DOUBLEWIDTH:
-        return ""
-    return " "
-
 def main():
     print("\n" + "–"*(UNICODE_LINELENGTH*3+11))
     for begin, end, description in UNICODE_BLOCKS:
-        if begin not in UNICODE_PLANES[SELECTED_CODEPLANE]:
+        if (begin >> 16) != SELECTED_CODEPLANE:
             continue
         if end < 0x10000:
             header = f"{begin:04X}–{end:04X} {description}"
