@@ -78,7 +78,6 @@ def output(c):
     category = unicodedata.category(c)
     bidirectional = unicodedata.bidirectional(c)
     width = unicodedata.east_asian_width(c)
-    #normal = unicodedata.is_normalized(c)
     decompose = unicodedata.decomposition(c)
     decomposed = decompose.split()
     print(CATEGORY_TABLE[category])
