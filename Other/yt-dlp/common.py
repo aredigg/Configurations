@@ -194,7 +194,7 @@ def postprocessor_hook(d):
             yprint("I", f"{operation[1]} {info.get("filename")} [{info.get("resolution")}@{info.get("fps")} ({info.get("aspect_ratio")}) {info.get("dynamic_range")} {codec_string}] ({info.get("duration")})")
             # print("\033[38;5;8m" + str(info) + "\033[39m")
             if operation[1] == "Moved":
-                sleep_time = random.randrange(min(max(info.get("duration") or 0, 1), 3600))
+                sleep_time = random.randrange(min(max(info.get("duration") or 0, 1), 7200))
                 sleep_now(sleep_time >> 2)
         else:
             yprint("+", f"{d.get("status")} {info.get("resolution")}/{info.get("fps")} {info.get("dynamic_range")} {info.get("vcodec")} {info.get("acodec")} {info.get("aspect_ratio")} {d.get("postprocessor")}")

@@ -1,11 +1,11 @@
 import common
+import datetime
 import atexit
 import shutil
 import fcntl
-import time
 import os
 
-YTDLP_CBT_VERSION = "1.16"
+YTDLP_CBT_VERSION = "1.17"
 YTDLP_MAX_LOCKS = 8
 common.YTDLP_OUTDIR = "/Volumes/Delt/Prosjekter/yt-dlp/.cbt"
 YTDLP_LOCK = f"{common.YTDLP_OUTDIR}/cbt"
@@ -25,14 +25,14 @@ def acquire_lock(lock_file):
     fd = os.open(lock_file, os.O_RDWR | os.O_CREAT, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        common.yprint("D", f"YT-DLP CBT lock acquired")                    
+        common.yprint("D", f"YT-DLP CBT lock acquired")
         return fd
     except BlockingIOError:
         common.yprint("D", f"YT-DLP CBT lock not acquired")
         return None
 
 def release_lock(lock_fd):
-    common.yprint("D", f"YT-DLP CBT releasing lock")                    
+    common.yprint("D", f"YT-DLP CBT releasing lock")
     if lock_fd is not None:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -71,16 +71,16 @@ def main():
     else:
         common.YTDLP_CHANNELSDIR = f"{common.YTDLP_CHANNELSDIR}_{slot_id}"
         common.YTDLP_ARCHIVEDIR = f"{common.YTDLP_ARCHIVEDIR}_{slot_id}"
-        common.yprint("I", f"YT-DLP CBT Slot {slot_id}")                    
-    archive_deletetime = 0
+        common.yprint("I", f"YT-DLP CBT Slot {slot_id}")
+    archive_deletedate = datetime.date.today()
     while main_loop:
         try:
             channel_count = sum(1 for _ in open(common.YTDLP_CHANNELSDIR))
-            if time.time() - archive_deletetime > 86400:
+            if datetime.date.today() > archive_deletedate:
                 if os.path.exists(common.YTDLP_ARCHIVEDIR):
                     common.yprint("D", f"YT-DLP CBT {common.YTDLP_ARCHIVEDIR} will be deleted")
                     os.remove(common.YTDLP_ARCHIVEDIR)
-                archive_deletetime = time.time()
+                archive_deletedate = datetime.date.today()
             channel_loop = True
             channel_loop_counter = 8
             while channel_loop:
