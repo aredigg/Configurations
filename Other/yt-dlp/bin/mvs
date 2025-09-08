@@ -1,0 +1,47 @@
+#!/usr/bin/env zsh
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 source target" >&2
+  exit 64
+fi
+
+SOURCE="$1"
+DESTINATION="$2"
+BASE="$(basename "$SOURCE")"
+
+if [[ ! -d "$SOURCE" ]]; then
+  echo "Error: SOURCE is not a directory: $SOURCE" >&2
+  exit 65
+fi
+if [[ ! -d "$DESTINATION" ]]; then
+  echo "Error: DESTINATION is not a directory: $DESTINATION" >&2
+  exit 66
+fi
+if [[ "$(realpath "$SOURCE")" == "$(realpath "$DESTINATION")" ]]; then
+  echo "Error: SOURCE and DESTINATION are the same directory." >&2
+  exit 67
+fi
+
+mkdir -p "$DESTINATION/$BASE"
+
+pushd "$SOURCE" >/dev/null
+
+find . -mindepth 1 -type d -exec mkdir -p "$DESTINATION/$BASE/{}" \;
+
+find . -type f -print0 | xargs -0 -I{} sh -c '
+    rel="$1"
+    dst="$2"
+    if [ ! -e "$dst/$rel" ]; then
+        mv -n "$rel" "$dst/$rel"
+    else
+        echo "why do you exist? $dst/$rel"
+        mv -f "$rel" "$dst/$rel"
+    fi
+' sh "{}" "$DESTINATION/$BASE"
+
+find . -depth -type d -empty -delete
+
+popd >/dev/null
+
+rmdir "$SOURCE" 2>/dev/null || true

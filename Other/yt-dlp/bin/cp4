@@ -1,0 +1,35 @@
+#!/usr/bin/env zsh
+set -uo pipefail
+
+SRC="$(cd "$1" && pwd -P)"
+DST="$(cd "$2" && pwd -P)"
+
+[[ -d "$SRC" ]] || { echo "Error: SOURCE is not a directory: $SRC" >&2; exit 65; }
+[[ -d "$DST" ]] || { echo "Error: DESTINATION is not a directory: $DST" >&2; exit 66; }
+
+pushd "$SRC" >/dev/null
+
+find . -type f -print0 | xargs -0 -I{} sh -c '
+  INP="$1"
+  if [ -e "$INP" ]; then
+    case "$INP" in
+      *.mp4|*.MP4)
+        TGT="$2/${INP%.*}.m4v"
+        echo "Copying    - $INP"
+        mkdir -p -- "$(dirname -- "$TGT")" || exit 1
+        cp -n -- "$INP" "$TGT"
+        ;;
+      *.en.vtt|*.en-US.vtt|*.en-GB.vtt|*.en-uYU-mmqFLq8.vtt|*.en-JkeT_87f4cc.vtt)
+        TGT="$2/$1"
+        echo "Copying    - $INP"
+        mkdir -p -- "$(dirname -- "$TGT")" || exit 1
+        cp -n -- "$INP" "$TGT"
+        ;;
+      *)
+        echo "  Skipping - $INP"
+        ;;
+    esac
+  fi
+' sh "{}" "$DST"
+
+popd >/dev/null
