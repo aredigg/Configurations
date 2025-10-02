@@ -1,98 +1,433 @@
-import common
+from __future__ import annotations
+
+import copy
 import datetime
-import atexit
-import shutil
-import fcntl
+import multiprocessing
 import os
+import shutil
+import signal
+import time
+from typing import TYPE_CHECKING, Any, Mapping, cast
 
-YTDLP_CBT_VERSION = "1.17"
-YTDLP_MAX_LOCKS = 8
-common.YTDLP_OUTDIR = "/Volumes/Delt/Prosjekter/yt-dlp/.cbt"
-YTDLP_LOCK = f"{common.YTDLP_OUTDIR}/cbt"
-common.VERBOSE = 0b001011
-common.YTDLP_MB = True
-common.YTDLP_LIVE = False
-common.YTDLP_OUTTMPL = "%(epoch>%Y-%m)s/%(epoch>W%W)s/%(epoch>%a)s/%(id)s.%(ext)s"
-common.YTDLP_HOMEDIR = f"{common.YTDLP_OUTDIR}/cbt"
-common.YTDLP_TEMPDIR = f"/Volumes/Ekstern/.cbttemp"
-common.YTDLP_ARCHIVEDIR = f"{common.YTDLP_OUTDIR}/archived"
-common.YTDLP_CHANNELSDIR = f"{common.YTDLP_OUTDIR}/channels"
-common.YTDLP_TEMP_ERRORS = f"{common.YTDLP_OUTDIR}/tmp_errors"
-common.YTDLP_TIMETABLEDIR = f"{common.YTDLP_OUTDIR}/timetable"
+from yt_dlp import YoutubeDL
+from yt_dlp.utils import RejectedVideoReached
 
-def acquire_lock(lock_file):
-    common.yprint("D", f"YT-DLP CBT acquiring lock {lock_file}")
-    fd = os.open(lock_file, os.O_RDWR | os.O_CREAT, 0o644)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        common.yprint("D", f"YT-DLP CBT lock acquired")
-        return fd
-    except BlockingIOError:
-        common.yprint("D", f"YT-DLP CBT lock not acquired")
-        return None
+import util
+from cli_print import CLIPrint
+from logger import Logger
 
-def release_lock(lock_fd):
-    common.yprint("D", f"YT-DLP CBT releasing lock")
-    if lock_fd is not None:
+LOCAL_VERSION = "2.07"
+OUTPUT_DIRECTORY = "/Volumes/Delt/Prosjekter/yt-dlp/.cbtv2"
+TEMP_DIRECTORY = "/Volumes/Ekstern/.cbttemp"
+
+CHANNELS_FILE = f"{OUTPUT_DIRECTORY}/channels"
+CHANNELS_PREFIX = f"{OUTPUT_DIRECTORY}/channel_prefix"
+YDL_OPTS = {
+    "ignoreerrors": True,
+    "live_from_start": False,
+    "multistreams": True,
+    "retries": 5,
+    "sleep_interval": 10,
+    "max_sleep_interval": 20,
+    "sleep_interval_requests": 0.5,
+    "paths": {
+        "temp": f"{TEMP_DIRECTORY}/temp",
+        "home": f"{OUTPUT_DIRECTORY}/home",
+    },
+    "cookiesfrombrowser": ("safari", None, None, None),
+    "outtmpl": "%(epoch>%Y-%m)s/%(epoch>W%W)s/%(epoch>%a)s/%(id)s.%(ext)s",
+    "writesubtitles": True,
+    "writeautomaticsub": False,
+    "subtitleslangs": ["all"],
+    "writedescription": False,
+    "writeinfojson": False,
+    "hls_prefer_native": True,
+    "external_downloader_args": {"ffmpeg": ["-loglevel", "quiet", "-hide_banner", "-nostats"]},
+    "downloader_args": {
+        "ffmpeg": ["-loglevel", "quiet", "-hide_banner", "-nostats"],
+        "ffmpeg_i": ["-rw_timeout", "30000000"],
+    },
+    "postprocessor_args": {"ffmpeg": ["-loglevel", "error", "-hide_banner", "-nostats"]},
+}
+MIN_DURATION = 300
+MAX_SLOTS = 3
+MAX_HEADERS = 4
+DEBUG = False
+
+cli = CLIPrint(MAX_SLOTS, MAX_HEADERS, TEMP_DIRECTORY + "/log", DEBUG)
+
+if TYPE_CHECKING:
+    from yt_dlp import _Params as YDLParams
+
+
+class _Params(dict[str, Any]):
+    """
+    Dict-compatible params wrapper with dot-access and deep copy on init.
+    Safe to pass to yt-dlp (behaves like a dict).
+    """
+
+    def __init__(self, data: Mapping[str, Any] | None = None, **kwargs: Any) -> None:
+        base = copy.deepcopy(dict(data or {}))
+        base.update(kwargs)
+        super().__init__(base)
+        # Recursively wrap nested dicts so dot-access works everywhere
+        for k, v in list(self.items()):
+            dict.__setitem__(self, k, self._wrap(v))
+
+    @classmethod
+    def _wrap(cls, v: Any) -> Any:
+        if isinstance(v, dict) and not isinstance(v, _Params):
+            return _Params(v)
+        if isinstance(v, list):
+            return [cls._wrap(x) for x in v]
+        return v
+
+    def __getattr__(self, name: str) -> Any:
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        finally:
-            os.close(lock_fd)
+            return self[name]
+        except KeyError as e:
+            raise AttributeError(name) from e
 
-def get_lockname(id):
-    if id is None:
-        return f"{YTDLP_LOCK}.lock"
+    def __setattr__(self, name: str, value: Any) -> None:
+        # Keep normal attributes for internals
+        if name.startswith("_"):
+            # Use object.__setattr__ to avoid recursion
+            object.__setattr__(self, name, value)
+            return
+        # Assign into dict and wrap nested dicts/lists
+        dict.__setitem__(self, name, self._wrap(value))
+        return  # Explicit None for type checkers
+
+    def __delattr__(self, name: str) -> None:
+        if name.startswith("_"):
+            object.__delattr__(self, name)
+            return
+        del self[name]
+        return
+
+    def copy(self) -> "_Params":
+        # Return the same type, deeply isolated from this instance
+        return _Params(copy.deepcopy(dict(self)))
+
+
+def run_ytdlp():
+    ret_status = 0
+    # Parse the channels
+    channels = []
+    channels_prefix = ""
+    try:
+        with open(f"{CHANNELS_FILE}", "r") as afile:
+            channels = [line.strip() for line in afile if line.strip() and not line.startswith("#")]
+        with open(f"{CHANNELS_PREFIX}", "r") as afile:
+            channels_prefix = afile.readline().strip()
+    except FileNotFoundError:
+        cli.status_line("Channel files not found")
+    # create a logger for yt-dlp
+    logger = Logger()
+    # set up yt-dlp
+    ydl_opts = _Params(YDL_OPTS)
+    ydl_opts["logger"] = logger
+    ydl_opts["progress_hooks"] = [progress_hook]
+    ydl_opts["postprocessor_hooks"] = [postprocessor_hook]
+    # initialize slots
+    slots = [{} for _ in range(MAX_SLOTS)]
+    postprocess_lock = multiprocessing.RLock()
+    # set up terminal
+    for n in range(MAX_SLOTS):
+        cli.slot_print("○", n)
+    # date limits
+    previous_date = datetime.datetime.now(datetime.timezone.utc).date()
+    # try channels
+    ydl_opts = cast("YDLParams", dict(ydl_opts))
+    running = True
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            while running:
+                finished_channels = []
+                while previous_date == datetime.datetime.now(datetime.timezone.utc).date():
+                    while all(slot for slot in slots):
+                        _wait_for_slot(slots)
+                    for counter, channel in enumerate(channels):
+                        cli.header_print(f"{previous_date} {counter:>3}/{len(channels)}", 2)
+                        if channel in finished_channels:
+                            cli.status_line(f"\033[1m{channel}\033[0m active or already done")
+                            continue
+                        if all(slot for slot in slots):
+                            # Skip all remaining channels while we wait for slot
+                            continue
+                        if info := ydl.extract_info(channels_prefix + channel, download=False, process=False):
+                            slot_index = next(i for i, slot in enumerate(slots) if not slot)
+                            if slot_index is not None:
+                                formats = info.get("formats") or []
+                                cli.status_line(f"\033[1m{channel}\033[0m {util.get_best_format(formats)}")
+                                cli.slot_print(
+                                    f"\033[5m●\033[0m {util.get_best_resolution(formats)} \033[1m{channel:20}\033[0m",
+                                    slot_index,
+                                )
+                                p, q = download_manager(channels_prefix, channel, slot_index, postprocess_lock)
+                                slots[slot_index] = {"process": p, "queue": q, "channel": channel}
+                                finished_channels.append(channel)
+                        while logger.if_error():
+                            extractor, id, error_msg = logger.read_error()
+                            if id == channel:
+                                cli.status_line(f"\033[1m{channel}\033[0m {error_msg}")
+                            else:
+                                cli.status_line(f"\033[1m{channel}\033[0m | {id} {error_msg}")
+                        if DEBUG:
+                            dmsg = []
+                            while logger.count() > 0:
+                                dmsg.append(logger.read())
+                            cli.debug_print(dmsg)
+                        else:
+                            logger.flush()
+                        _poll_workers(slots)
+                    cli.header_print(f"{previous_date} {'---':>3}/{len(channels)}", 2)
+                if False:
+                    while any(slot for slot in slots):
+                        if not _poll_workers(slots):
+                            cli.status_line("Date change, waiting for slots to complete")
+                            time.sleep(5.0)
+    except SystemExit as e:
+        cli.status_line(f"SystemExit {str(e)}")
+        ret_status = -1
+    except KeyboardInterrupt:
+        cli.status_line("KeyboardInterrupt")
+        _shutdown_slots(slots)
+        ret_status = -1
+    except BaseException as e:
+        cli.status_line(f"BaseException {str(e)}")
+        ret_status = -1
+    _shutdown_slots(slots)
+    while any(slot for slot in slots):
+        time.sleep(5.0)
+        try:
+            if not _poll_workers(slots):
+                cli.status_line("Waiting for slots to shutdown")
+                time.sleep(5.0)
+        except KeyboardInterrupt:
+            return ret_status
+    return ret_status
+
+
+def download_manager(channels_prefix, channel, slot_index, lock):
+    assert slot_index < MAX_SLOTS, f"Slots over limit {slot_index}"
+    q = multiprocessing.Queue()
+    p = multiprocessing.Process(
+        target=_download_worker, args=(channels_prefix, channel, slot_index, q, lock), daemon=True
+    )
+    p.start()
+    return p, q
+
+
+def _download_worker(channels_prefix, channel, slot_index, queue, lock):
+    try:
+        ydl_opts = _Params(YDL_OPTS)
+        ydl_opts["logger"] = Logger(slot_index, queue)
+        slot_progress_hook, slot_postprocessor_hook = _make_slot_hooks(slot_index, queue, lock)
+        ydl_opts["progress_hooks"] = [slot_progress_hook]
+        ydl_opts["postprocessor_hooks"] = [slot_postprocessor_hook]
+        ydl_opts = cast("YDLParams", dict(ydl_opts))
+        with YoutubeDL(ydl_opts) as ydl:
+            result = ydl.download([channels_prefix + channel])
+            queue.put(("done", result))
+    except Exception as e:
+        queue.put(("error", str(e)))
+    finally:
+        cli.status_line(f"Slot {slot_index + 1} releasing lock")
+        try:
+            lock.release()
+            cli.status_line(f"Slot {slot_index + 1} lock released")
+        except AssertionError:
+            cli.status_line(f"Slot {slot_index + 1} lock not owned")
+        except ValueError:
+            pass
+
+
+def _make_slot_hooks(slot_index, queue, lock):
+    def _ph(d):
+        if d:
+            common_hook("progress", d, slot_index=slot_index)
+            if d.get("status") == "finished":
+                cli.status_line(f"Slot {slot_index + 1} acquiring lock")
+                lock.acquire()
+                cli.status_line(f"Slot {slot_index + 1} lock acquired")
+
+    def _pph(d):
+        if d:
+            common_hook("postprocessor", d, slot_index=slot_index)
+
+    return _ph, _pph
+
+
+def _poll_workers(slots):
+    cli.header_print(datetime.datetime.now().strftime("%H:%M"), 3)
+    state_changed = False
+    for i, slot in enumerate(list(slots)):
+        if slot:
+            p, q, c = slot["process"], slot["queue"], slot["channel"]
+            draining = True
+            while draining:
+                try:
+                    msg = q.get(timeout=0.1)
+                    if isinstance(msg, tuple) and msg and msg[0] in ("done", "error"):
+                        key, value = msg
+                        if key == "done":
+                            cli.slot_print(f"○ {' ':9} {c:20}", i)
+                            cli.status_line(f"{c} Done: {value}")
+                        else:
+                            cli.slot_print(f"○ {' ':9} {c:20} | \033[31mError:\033[39m {value}", i)
+                            cli.status_line(f"{c} Error: {value}")
+                        state_changed = True
+                except Exception:
+                    draining = False
+            if not p.is_alive():
+                p.join(timeout=1.0)
+                if q:
+                    try:
+                        q.close()
+                        q.join_thread()
+                    except Exception:
+                        pass
+                slots[i] = {}
+    return state_changed
+
+
+def _wait_for_slot(slots):
+    cli.status_line("Waiting for free slots")
+    interval = 0.1
+    while all(slot for slot in slots):
+        if _poll_workers(slots):
+            return
+        time.sleep(interval)
+        interval = min(5.0, interval * 1.5)
+
+
+def _shutdown_slots(slots):
+    for slot in slots:
+        if slot:
+            p = slot.get("process")
+            q = slot.get("queue")
+            if p and p.is_alive():
+                cli.status_line("Slot process")
+                try:
+                    pgid = os.getpgid(p.pid)
+                    cli.status_line(f"Slot process send SIGINT -> {pgid}")
+                    os.killpg(pgid, signal.SIGINT)
+                except ProcessLookupError:
+                    cli.status_line("ProcessLookupError")
+                except Exception as e:
+                    cli.status_line(f"Exception {str(e)}")
+            if q:
+                try:
+                    while not q.empty():
+                        try:
+                            q.get_nowait()
+                        except Exception:
+                            break
+                    q.close()
+                    q.join_thread()
+                except Exception as e:
+                    cli.status_line(f"Error closing queue: {e}")
+
+
+def progress_hook(data):
+    if not data:
+        cli.status_line("Empty progress_hook data")
     else:
-        return f"{YTDLP_LOCK}-{id}.lock"
+        common_hook("progress", data)
 
-def acquire_slot():
-    fd = acquire_lock(get_lockname(None))
-    if fd is not None:
-        return None, fd
-    for id in range(1, YTDLP_MAX_LOCKS + 1):
-        fd = acquire_lock(get_lockname(id))
-        if fd is not None:
-            return id, fd
-    common.yprint("E", "No more locks available")
-    return None, None
+
+def postprocessor_hook(data):
+    if not data:
+        cli.status_line("Empty postprocessor_hook data")
+    else:
+        common_hook("postprocessor", data)
+
+
+def common_hook(hook, data, slot_index=None):
+    output = ""
+    # save data struct to a file
+    if DEBUG:
+        save_list = []
+        util.dict_save(data, save_list)
+        util.save_list_to_file(hook, save_list, TEMP_DIRECTORY)
+    #
+    status = data.get("status")
+    if not status:
+        return
+    title = ""
+    id = ""
+    resolution = ""
+    elapsed = int(data.get("elapsed") or 0)
+    total_bytes = int(data.get("total_bytes") or 0)
+    if info := data.get("info_dict"):
+        id = info.get("id") or ""
+        title = info.get("title") or id
+        width = int(info.get("width") or 0)
+        height = int(info.get("height") or 0)
+        fps = info.get("fps") or 0
+        tbr = info.get("tbr") or 0
+        ar = info.get("aspect_ratio") or 0.0
+        dr = info.get("dynamic_range") or "SDR"
+        vcodec = (info.get("vcodec") or "----")[:4]
+        acodec = (info.get("acodec") or "----")[:4]
+        if width > 0 and height > 0:
+            resolution = f"{width:4}x{height:4}"
+        ext = info.get("ext") or ""
+        filename = info.get("filename") or ""
+        from_filepath = info.get("filepath") or ""
+        finaldir = info.get("__finaldir") or ""
+        output += f"{title} {fps} {tbr} {ar} {dr} {vcodec} {acodec} {ext} {filename} {from_filepath} {finaldir}"
+    if hook == "progress":
+        if status == "finished":
+            if 0 < elapsed < MIN_DURATION:
+                # fixme, need to find the proper filenames before move
+                filename = info.get("filename") or data.get("filename")
+                if filename and os.path.exists(filename):
+                    try:
+                        os.remove(filename)
+                    except Exception:
+                        cli.status_line(f"Error during remove: {filename}")
+                else:
+                    cli.status_line(f"Error with file: {filename}")
+                cli.status_line(f"{title} rejected: {elapsed} s < {MIN_DURATION} s")
+                cli.slot_print(f"● {resolution} \033[1m{id:20}\033[0m | Rejected", slot_index)
+                raise RejectedVideoReached(f"Duration {elapsed} s too short")
+        tf = util.time_formatted(*util.convert_seconds(elapsed))
+        output = f"{resolution:9} \033[1m{id:20}\033[0m | {status} download, {int(total_bytes >> 20)} MB {tf}"
+    elif hook == "postprocessor":
+        post_status = data.get("postprocessor") or ""
+        output = f"{resolution:9} {id:20} | {post_status} {status}"
+    if slot_index is not None:
+        cli.slot_print("● " + output, slot_index)
+    else:
+        cli.status_line(output)
+
 
 def main():
+    def signal_handler(signum, frame):
+        cli.status_line("Interrupt received, shutting down...")
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, signal_handler)
     main_loop = True
-    common.yprint("I", f"YT-DLP CBT {YTDLP_CBT_VERSION}")
-    os.makedirs(common.YTDLP_OUTDIR, exist_ok=True)
-    slot_id, lock_fd = acquire_slot()
-    if lock_fd == None:
-        return
-    atexit.register(release_lock, lock_fd)
-    if slot_id is None:
-        common.yprint("I", f"YT-DLP CBT Main Slot")
-        common.yprint("D",f"YT-DLP CBT temporary directory will be removed")
-        shutil.rmtree(common.YTDLP_TEMPDIR, ignore_errors=True)
-    else:
-        common.YTDLP_CHANNELSDIR = f"{common.YTDLP_CHANNELSDIR}_{slot_id}"
-        common.YTDLP_ARCHIVEDIR = f"{common.YTDLP_ARCHIVEDIR}_{slot_id}"
-        common.yprint("I", f"YT-DLP CBT Slot {slot_id}")
-    archive_deletedate = datetime.date.today()
+    cli.cls()
+    cli.cursor_off()
+    cli.header_print(f"YT_DLP CBT {LOCAL_VERSION}", 1, color=CLIPrint.GREEN)
+    os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
+    shutil.rmtree(TEMP_DIRECTORY, ignore_errors=True)
+    os.makedirs(TEMP_DIRECTORY, exist_ok=True)
     while main_loop:
         try:
-            channel_count = sum(1 for _ in open(common.YTDLP_CHANNELSDIR))
-            if datetime.date.today() > archive_deletedate:
-                if os.path.exists(common.YTDLP_ARCHIVEDIR):
-                    common.yprint("D", f"YT-DLP CBT {common.YTDLP_ARCHIVEDIR} will be deleted")
-                    os.remove(common.YTDLP_ARCHIVEDIR)
-                archive_deletedate = datetime.date.today()
-            channel_loop = True
-            channel_loop_counter = 8
-            while channel_loop:
-                archived_count = sum(1 for _ in open(common.YTDLP_ARCHIVEDIR)) if os.path.isfile(common.YTDLP_ARCHIVEDIR) else 0
-                common.yprint("I", f"YT-DLP CBT {archived_count}/{channel_count} LOOP {channel_loop_counter}")
-                common.yprint("I", f"YT-DLP CBT {common.run_ytdlp()}")
-                channel_loop = (archived_count < channel_count) and (archived_count < 12) and (channel_loop_counter > 0)
-                common.sleep_now(1800)
-                channel_loop_counter -= 1
+            ret = run_ytdlp()
+            if ret < 0:
+                main_loop = False
         except KeyboardInterrupt:
-            common.yprint("E", f"YT-DLP CBT KeyboardInterrupt")
             main_loop = False
+            cli.status_line("KeyboardInterrupt")
+    cli.cursor_on()
+    cli.pass_cursor()
+
 
 if __name__ == "__main__":
     main()

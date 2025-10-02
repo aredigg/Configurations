@@ -801,6 +801,7 @@ download_git() {
     if [[ ! -d "${SOURCES_DIRECTORY}/${package}" ]]; then
         print_status $package "INFO" "Cloning"
         git clone  --no-checkout "$url" "${SOURCES_DIRECTORY}/${package}"
+        git_update_remote $package "${SOURCES_DIRECTORY}/${package}"
         git -C "${SOURCES_DIRECTORY}/${package}" config --add remote.origin.fetch '^refs/heads/users/*'
         git -C "${SOURCES_DIRECTORY}/${package}" config --add remote.origin.fetch '^refs/heads/revert-*'
         git -C "${SOURCES_DIRECTORY}/${package}" checkout $branch
@@ -810,6 +811,7 @@ download_git() {
         if git -C "${SOURCES_DIRECTORY}/${package}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             # !!! The script assumes that you don't use these temporary directories for development
             print_status $package "INFO" "Updating"
+            git_update_remote "$package" "${SOURCES_DIRECTORY}/${package}"
             git -C "${SOURCES_DIRECTORY}/${package}" reset --hard HEAD
             sudo_check
             sudo git -C "${SOURCES_DIRECTORY}/${package}" clean -xffd
@@ -1060,6 +1062,7 @@ install_meson() {
     local source_directory="$3"
     local build_directory="$4"
     if [[ $INSTALL_COMMAND == "install" ]]; then
+        meson_update_wraps $package "$source_directory"
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
         cd "$source_directory"
@@ -1124,6 +1127,15 @@ install_pip() {
         if [[ $2 == "binary" ]]; then
             print_status $package "INFO" "Installing"
             sudo $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"
+        elif [[ $2 == "version" ]]; then
+            print_status $package "INFO" "Installing"
+            if [[ $4 != "" ]]; then
+                echo $1 $2 $3 $4 $5
+                sudo $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"==$3 --extra-index-url "$4"
+            else
+                echo $1 $2 $3 $4 $5
+                sudo $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"==$3
+            fi
         else
             print_status $package "INFO" "Compiling"
             sudo -H $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --no-binary :all: --upgrade "$package"
@@ -1266,6 +1278,7 @@ install_package() {
     local package=$1
     local skip_time=$SKIPTIME
     # package-name, kind, alternative/alt-options, config-options, source-directory, download-command, url, filename/branch, etag (https), strip (https-extract), tag
+    # for install_pip 5=extra url (source_directory must not be used)
     local source_directory="${SOURCES_DIRECTORY}/${package}${5}"
     local build_directory="${BUILDS_DIRECTORY}/${package}"
 
@@ -1310,7 +1323,7 @@ install_package() {
                 install_meson "$package" "$4" "$source_directory" "$build_directory"
                 ;;
             pip)
-                install_pip "$package" "$3"
+                install_pip "$package" "$3" "$4" "$5"
                 ;;
             cargo)
                 install_cargo "$package" "$3" "$4" "$source_directory" "$build_directory"
@@ -1378,6 +1391,58 @@ install_certs() {
 }
 
 # Custom patches and symlinks etc
+
+meson_update_wraps() {
+    local package="$1"
+    local source_directory="$2"
+    if [ -d "$source_directory/subprojects" ]; then
+        print_status $package "INFO" "Rewrapping"
+        local OLD_URL_PART="gitlab.gnome.org/GNOME"
+        local NEW_URL_PART="github.com/GNOME"
+        find "$source_directory/subprojects" -name "*.wrap" -print0 | while IFS= read -r -d $'\0' wrap_file; do
+            if grep -q "url.*${OLD_URL_PART}" "$wrap_file"; then
+                print_status $package "INFO" $(basename "$wrap_file")
+                sed -i "" "s|${OLD_URL_PART}|${NEW_URL_PART}|g" "$wrap_file"
+            fi
+        done
+    fi
+}
+
+git_update_remote() {
+    local package="$1"
+    local git_dir="$2"
+
+    local OLD_URL_PART="gitlab.gnome.org/GNOME"
+    local NEW_URL_PART="github.com/GNOME"
+    export EXPORTED_OLD_URL_PART="$OLD_URL_PART"
+    export EXPORTED_NEW_URL_PART="$NEW_URL_PART"
+    local CURRENT_MAIN_URL=$(git -C "$git_dir" remote get-url origin)
+
+    if [[ $CURRENT_MAIN_URL == *"$OLD_URL_PART"* ]]; then
+        print_status $package "INFO" "Rewriting URL"
+        local NEW_MAIN_URL=${CURRENT_MAIN_URL/$OLD_URL_PART/$NEW_URL_PART}
+        git -C "$git_dir" remote set-url origin "$NEW_MAIN_URL"
+    fi
+    if [ -f "$git_dir/.gitmodules" ]; then
+        print_status $package "INFO" "Checking URL"
+        sed -i '' "s|${OLD_URL_PART}|${NEW_URL_PART}|g" "$git_dir/.gitmodules"
+        cat "$git_dir/.gitmodules"
+        git -C "$git_dir" submodule sync --recursive
+        (
+            cd "$git_dir" || exit
+            git submodule foreach --recursive \
+                '
+                CURRENT_SUB_URL=$(git remote get-url origin)
+                if [[ $CURRENT_SUB_URL == *"$EXPORTED_OLD_URL_PART"* ]]; then
+                    NEW_SUB_URL=${CURRENT_SUB_URL/"$EXPORTED_OLD_URL_PART"/"$EXPORTED_NEW_URL_PART"}
+                    git remote set-url origin "$NEW_SUB_URL"
+                fi
+                '
+        )
+    fi
+    unset EXPORTED_OLD_URL_PART
+    unset EXPORTED_NEW_URL_PART
+}
 
 # after download, before install
 pre_patch() {
@@ -1621,8 +1686,8 @@ main() {
         # acquire certs
         install_certs
 
-        # openssl - brotli, certs
-        install_package "openssl" "configure" "" "--openssldir=$INSTALL_PREFIX/etc/ssl darwin64-arm64-cc enable-ec_nistp_64_gcc_128" "" "git" "https://github.com/openssl/openssl.git" "master" "YES" "YES"
+        # openssl (versioned, v4 not compatible with rust crate) - brotli, certs
+        install_package "openssl" "configure" "" "--openssldir=$INSTALL_PREFIX/etc/ssl darwin64-arm64-cc enable-ec_nistp_64_gcc_128" "" "git" "https://github.com/openssl/openssl.git" "master" "YES" "YES" "openssl-3.5"
 
         # nghttp2 - cmake
         install_package "nghttp2" "cmake" "" "" "" "git" "https://github.com/nghttp2/nghttp2.git" "master" "YES" "YES"
@@ -1676,7 +1741,7 @@ main() {
                     --enable-ipv6 \
                     --with-system-expat \
                     --with-system-libmpdec \
-                " "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES" "v3.13.7"
+                " "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES" "3.14"
         fi
         export SCRIPT_PYTHONPATH="$INSTALL_PREFIX/bin"
         export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:$PATH"
@@ -1725,7 +1790,7 @@ main() {
         add_rpath "$INSTALL_PREFIX/bin/hx" "@loader_path/../lib"
 
         # jdtls (versioned) - java, python
-        install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.49.0/" "jdt-language-server-1.49.0-202507311558.tar.gz" "YES" "NO"
+        install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.50.0/" "jdt-language-server-1.50.0-202509041425.tar.gz" "YES" "NO"
 
         # vhdl_ls
         install_package "vhdl_ls" "cargo" "/vhdl_ls" "" "" "git" "https://github.com/VHDL-LS/rust_hdl.git" "master" "YES" "YES"
@@ -1750,21 +1815,21 @@ main() {
         install_package "libpng" "cmake" "" "" "" "git" "https://github.com/pnggroup/libpng.git" "master" "YES" "YES"
 
         # gobject-introspection
-        install_package "gobject-introspection" "meson" "" "" "" "git" "https://gitlab.gnome.org/GNOME/gobject-introspection.git" "main" "YES" "YES"
+        install_package "gobject-introspection" "meson" "" "" "" "git" "https://github.com/GNOME/gobject-introspection.git" "main" "YES" "YES"
 
         # freetype - cmake, pkgconf, libpng, bzip2 (mac), zlib (mac)
-        install_package "freetype" "cmake" "" "" "" "git" "https://gitlab.freedesktop.org/freetype/freetype.git" "master" "YES" "YES"
+        install_package "freetype" "cmake" "" "" "" "git" "https://github.com/freetype/freetype.git" "master" "YES" "YES"
 
         # fontconfig - autoconf, gettext, libtool, pkgconf, freetype, gperf (mac), python (mac), bzip2 (mac), expat (mac)
         export LDFLAGS="-Wl,-rpath,$INSTALL_PREFIX/lib"
-        install_package "fontconfig" "configure_in_source" "./autogen.sh" "" "" "git" "https://gitlab.freedesktop.org/fontconfig/fontconfig.git" "main" "YES" "YES"
+        install_package "fontconfig" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/fontconfig/fontconfig.git" "main" "YES" "YES"
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
-        # pixman - meson
-        install_package "pixman" "meson" "" "" "" "git" "https://gitlab.freedesktop.org/pixman/pixman.git" "master" "YES" "YES"
+        # pixman (versioned) - meson
+        install_package "pixman" "meson" "" "" "" "https" "https://cairographics.org/releases/" "pixman-0.46.4.tar.gz" "YES" "YES"
 
-        # cairo - meson
-        install_package "cairo" "meson" "" "-Dquartz=enabled" "" "git" "https://gitlab.freedesktop.org/cairo/cairo.git" "master" "YES" "YES"
+        # cairo (versioned) - meson
+        install_package "cairo" "meson" "" "-Dquartz=enabled" "" "https" "https://cairographics.org/releases/" "cairo-1.18.4.tar.xz" "YES" "YES"
 
         # fribidi
         install_package "fribidi" "meson" "" "-Ddocs=false" "" "git" "https://github.com/fribidi/fribidi.git" "master" "YES" "YES"
@@ -1803,7 +1868,7 @@ main() {
         add_rpath "$INSTALL_PREFIX/bin/cargo-cbuild" "@loader_path/../lib"
 
         # glib - meson
-        install_package "glib" "meson" "" "-Dselinux=disabled -Ddtrace=disabled -Dsystemtap=disabled -Dbsymbolic_functions=false -Dintrospection=enabled -Dtests=false" "" "git" "https://gitlab.gnome.org/GNOME/glib.git" "main" "YES" "YES"
+        install_package "glib" "meson" "" "-Dselinux=disabled -Ddtrace=disabled -Dsystemtap=disabled -Dbsymbolic_functions=false -Dintrospection=enabled -Dtests=false" "" "git" "https://github.com/GNOME/glib.git" "main" "YES" "YES"
 
         # markdown - python
         install_package "markdown" "pip"
@@ -2083,7 +2148,7 @@ main() {
         install_package "libzmq" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/zeromq/libzmq.git" "master" "YES" "YES"
 
         # ffmpeg
-        # --enable-libx265 removed
+        # --enable-libx265 removed use videotoolbox
         # --extra-cflags=-I$INSTALL_PREFIX/include --extra-ldflags=-L$INSTALL_PREFIX/lib removed
         export LDFLAGS="-logg -lvorbis -lsharpyuv -lwebp -Wl,-rpath,@loader_path/../lib"
         install_package "ffmpeg" "configure" "" "--enable-gpl --enable-version3 --enable-nonfree --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libcdio --enable-libdav1d --enable-libfdk-aac --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libgme --enable-libharfbuzz --enable-libjxl --enable-libmp3lame --enable-libopencore-amrwb --enable-opengl --enable-libopus  --enable-libopenjpeg --enable-libopenmpt --enable-libsvtav1 --enable-libtheora --enable-libxvid  --enable-libsnappy --enable-libmysofa --enable-libopencore-amrnb --enable-libmodplug --enable-libqrencode --enable-libshine --enable-librubberband --enable-libsoxr --enable-libsnappy --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvo-amrwbenc --enable-libvpx --enable-libwebp --enable-libx264 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzvbi --enable-gcrypt --enable-gmp --enable-gnutls --enable-openal --enable-opencl --enable-pocketsphinx  --enable-libopenh264 --enable-libvmaf --enable-libxavs2 --enable-libzmq" "" "git" "https://git.ffmpeg.org/ffmpeg.git" "master" "YES" "YES"
@@ -2094,6 +2159,9 @@ main() {
 
         # mako - python
         install_package "mako" "pip"
+
+        # pyyaml - python
+        install_package "pyyaml" "pip"
 
         # mesa
         install_package "mesa" "meson" "" "-Dllvm=disabled -Dshared-llvm=disabled -Dcpp_rtti=false -Dplatforms=macos -Dgallium-drivers=softpipe -Dglx=disabled" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
@@ -2163,7 +2231,7 @@ main() {
         install_package "eza" "cargo" "" "" "" "git" "https://github.com/eza-community/eza.git" "main" "YES" "YES"
 
         # jupyterlab - python
-        install_package "jupyterlab" "pip"
+        install_package "jupyterlab" "pip" "binary"
 
         # voila - python
         install_package "voila" "pip" "binary"
@@ -2185,7 +2253,13 @@ main() {
         install_package "scikit-learn" "pip" "binary"
 
         # torch - python
-        install_package "torch" "pip"
+        install_package "torch" "pip" "version" "2.9.0" "https://download.pytorch.org/whl/test/"
+
+        # torchvision - python
+        install_package "torchvision" "pip" "version" "0.24.0" "https://download.pytorch.org/whl/test/"
+
+        # torchaudio - python
+        install_package "torchaudio" "pip" "version" "2.9.0" "https://download.pytorch.org/whl/test/"
 
         # libdaq
         install_package "libdaq" "configure_in_source" "" "" "" "git" "https://github.com/snort3/libdaq.git" "master" "YES" "YES"
@@ -2260,11 +2334,18 @@ main() {
         # yt-dlp - python
         install_package "yt-dlp" "pip"
 
-        # openai-whisper - python
-        install_package "openai-whisper" "pip" "binary"
+        # tensorflow - python (do not support 3.14)
+        # install_package "tf-nightly" "pip"
 
-        # postgresql (versioned) https://git.postgresql.org/git/postgresql.git
-        install_package "postgresql" "meson" "" "" "" "git" "https://github.com/postgres/postgres.git" "REL_17_STABLE" "YES" "YES"
+        # opencv-python - python
+        install_package "opencv-python" "pip" "binary"
+
+        # openai-whisper - python (do not support 3.14)
+        # install_package "openai-whisper" "pip" "binary"
+
+        # postgresql (versioned)
+        install_package "postgresql" "meson" "" "" "" "git" "https://git.postgresql.org/git/postgresql.git" "REL_17_STABLE" "YES" "YES"
+#        install_package "postgresql" "meson" "" "" "" "git" "https://github.com/postgres/postgres.git" "REL_17_STABLE" "YES" "YES"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then

@@ -11,17 +11,18 @@ pushd "$SRC" >/dev/null
 
 find . -type f -print0 | xargs -0 -I{} sh -c '
   INP="$1"
+  BNM="$(basename -- "$INP")"
   if [ -e "$INP" ]; then
     case "$INP" in
       *.mp4|*.MP4)
-        TGT="$2/${INP%.*}.m4v"
-        echo "Copying    - $INP"
+        TGT="$2/${BNM%.*}.m4v"
+        echo "Copying    - $INP --> $TGT"
         mkdir -p -- "$(dirname -- "$TGT")" || exit 1
         cp -n -- "$INP" "$TGT"
         ;;
       *.en.vtt|*.en-US.vtt|*.en-GB.vtt|*.en-uYU-mmqFLq8.vtt|*.en-JkeT_87f4cc.vtt)
-        TGT="$2/$1"
-        echo "Copying    - $INP"
+        TGT="$2/$BNM"
+        echo "Copying    - $INP --> $TGT"
         mkdir -p -- "$(dirname -- "$TGT")" || exit 1
         cp -n -- "$INP" "$TGT"
         ;;

@@ -1,0 +1,84 @@
+#!/usr/bin/env zsh
+
+# Function to rename a single MP4 file based on its metadata tag.
+# Usage: rename_from_metadata_tag "path/to/your/video.mp4"
+
+rename_from_metadata_tag() {
+  # Use the first argument as the input file
+  local input_file="$1"
+  # Define the path to the desired metadata tag within the JSON output
+  local metadata_jq_path=".format.tags.episode_id"
+
+  # --- Safety and Prerequisite Checks ---
+  if ! command -v ffprobe &>/dev/null; then
+    echo "Error: ffprobe is not installed. Please install ffmpeg." >&2
+    return 1
+  fi
+
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq is not installed. Please install jq." >&2
+    return 1
+  fi
+
+  if [[ ! -f "$input_file" ]]; then
+    echo "Error: File not found: '$input_file'" >&2
+    return 1
+  fi
+
+  # --- Metadata Extraction ---
+  echo "Processing: $input_file"
+  # Extract the metadata tag from the format section using ffprobe and jq.
+  local metadata_value
+  # FIX 1: Use double quotes around the variable so the shell expands it.
+  metadata_value=$(ffprobe -v quiet -print_format json -show_format "$input_file" | \
+          jq -r "$metadata_jq_path")
+
+  # --- Validation and Sanitization ---
+  # FIX 3: Use double quotes here to print the actual path in the warning.
+  if [[ -z "$metadata_value" || "$metadata_value" == "null" ]]; then
+    echo "Warning: No '$metadata_jq_path' metadata found for '$input_file'. Skipping." >&2
+    return 1
+  fi
+
+  # Sanitize the metadata_value to create a valid filename
+  # 1. Replace slashes with dashes
+  # 2. Remove other invalid filename characters
+  # 3. Replace multiple spaces/whitespace with a single space
+  # 4. Replace single spaces with an underscore
+  local sanitized_value
+  sanitized_value=$(echo "$metadata_value" | \
+                    sed -e 's|/|-|g' \
+                        -e 's|[\\?%*:|"<>]||g' \
+                        -e 's|\s\+| |g' | \
+                    tr ' ' '_' )
+
+  # --- Renaming Logic ---
+  local dir
+  dir=$(dirname "$input_file")
+  # In Zsh, ${input_file:e} gets the extension
+  local extension="${input_file:e}"
+  # FIX 2: Use the correctly renamed variable `sanitized_value`.
+  local new_filename="${dir}/${sanitized_value}.${extension}"
+
+  # Check if the new name is the same as the old one
+  if [[ "$input_file" == "$new_filename" ]]; then
+    echo "Info: Filename is already correct. Skipping."
+    return 0
+  fi
+
+  echo "  --> Renaming to: $new_filename"
+  # Use -- to prevent filenames starting with a '-' from being treated as an option
+  mv -v -- "$input_file" "$new_filename"
+}
+
+# --- Script Execution ---
+# Check if any arguments were passed
+if [[ $# -eq 0 ]]; then
+  echo "Usage: $0 file1.mp4 [file2.mp4 ...]"
+  exit 1
+fi
+
+# Loop through all files provided as arguments
+for file in "$@"; do
+  rename_from_metadata_tag "$file"
+done
