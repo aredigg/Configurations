@@ -168,7 +168,7 @@ def run_ytdlp():
                                 slots[slot_index] = {"process": p, "queue": q, "channel": channel}
                                 finished_channels.append(channel)
                         while logger.if_error():
-                            extractor, id, error_msg = logger.read_error()
+                            _, id, error_msg = logger.read_error()
                             if id == channel:
                                 cli.status_line(f"\033[1m{channel}\033[0m {error_msg}")
                             else:
@@ -182,11 +182,6 @@ def run_ytdlp():
                             logger.flush()
                         _poll_workers(slots)
                     cli.header_print(f"{previous_date} {'---':>3}/{len(channels)}", 2)
-                if False:
-                    while any(slot for slot in slots):
-                        if not _poll_workers(slots):
-                            cli.status_line("Date change, waiting for slots to complete")
-                            time.sleep(5.0)
     except SystemExit as e:
         cli.status_line(f"SystemExit {str(e)}")
         ret_status = -1
@@ -222,8 +217,8 @@ def download_manager(channels_prefix, channel, slot_index, lock):
 def _download_worker(channels_prefix, channel, slot_index, queue, lock):
     try:
         ydl_opts = _Params(YDL_OPTS)
-        ydl_opts["logger"] = Logger(slot_index, queue)
-        slot_progress_hook, slot_postprocessor_hook = _make_slot_hooks(slot_index, queue, lock)
+        ydl_opts["logger"] = Logger()
+        slot_progress_hook, slot_postprocessor_hook = _make_slot_hooks(slot_index, lock)
         ydl_opts["progress_hooks"] = [slot_progress_hook]
         ydl_opts["postprocessor_hooks"] = [slot_postprocessor_hook]
         ydl_opts = cast("YDLParams", dict(ydl_opts))
@@ -243,7 +238,7 @@ def _download_worker(channels_prefix, channel, slot_index, queue, lock):
             pass
 
 
-def _make_slot_hooks(slot_index, queue, lock):
+def _make_slot_hooks(slot_index, lock):
     def _ph(d):
         if d:
             common_hook("progress", d, slot_index=slot_index)
@@ -405,11 +400,6 @@ def common_hook(hook, data, slot_index=None):
 
 
 def main():
-    def signal_handler(signum, frame):
-        cli.status_line("Interrupt received, shutting down...")
-        raise KeyboardInterrupt
-
-    signal.signal(signal.SIGINT, signal_handler)
     main_loop = True
     cli.cls()
     cli.cursor_off()

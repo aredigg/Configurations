@@ -1,8 +1,7 @@
 class Logger:
-    def __init__(self, slot_index=None, queue=None):
+    def __init__(self):
         self.__messages = []
         self.__error_messages = []
-        self.__queue = queue
 
     def debug(self, msg):
         self.__messages.append(msg)

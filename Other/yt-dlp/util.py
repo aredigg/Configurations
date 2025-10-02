@@ -111,7 +111,7 @@ def get_format_string(format):
     return f"{width}x{height}@{fps} ({dr}) - {asr}/{audio_channels} - {vcodec}/{acodec} {ext}"
 
 
-def get_best_resolution(formats, ext="mp4"):
+def get_best_resolution(formats):
     if format := enumerate_best_format(formats):
         width = format.get("width") or 0
         height = format.get("height") or 0
