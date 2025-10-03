@@ -12,7 +12,7 @@ class CLIPrint:
     DEFAULT = "\033[39m"
     DIM_GRAY = "\033[38;5;8m"
     RESET = "\033[0m"
-    CLEAR_LINE = "\033[0K"
+    CLEAR_LINE = "\033[0m\033[0K"
     RETURN = "\033[0m\033[0K\033[1F"
 
     def __init__(self, slots=1, headers=2, logfile=None, debug=False):
@@ -53,9 +53,9 @@ class CLIPrint:
         self.log("SLOT" + str(index + 1) + f": {dt} {text}")
 
     def tree_print(self, text, index=None, line=0):
-        print_line = self._headers + 2 + line
+        print_line = self._headers + 1 + line
         indent = ""
-        if index:
+        if index is not None:
             print_line += index
             indent = "  " * index
             self._line_index = index
@@ -71,7 +71,7 @@ class CLIPrint:
         if index > self._headers:
             self.status_line(text)
         else:
-            print(f"{self.line(index)}{color}{text}{CLIPrint.RETURN}")
+            print(f"{self.line(index)}{color}{text}{CLIPrint.CLEAR_LINE}")
             self._hprint()
 
     def debug_print(self, text):

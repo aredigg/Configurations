@@ -2,6 +2,7 @@ import datetime
 import os
 import random
 import time
+from statistics import mean, median
 
 
 def dict_print(data, indent=0):
@@ -54,34 +55,31 @@ def save_list_to_file(prefix, save_list, output_directory):
 
 
 def enumerate_best_format(formats, extension="mp4"):
-    previous_width = previous_fps = previous_asr = previous_audio_channels = 0
-    previous_dr = "SDR"
+    previous_height = previous_fps = previous_asr = previous_audio_channels = 0
     current_best_format = None
     for format in formats:
-        width = format.get("width") or 0
+        height = format.get("height") or 0
         fps = format.get("fps") or 0
         asr = format.get("asr") or 0
         audio_channels = format.get("audio_channels") or 0
         dr = format.get("dynamic_range") or "SDR"
         if (format.get("ext") or "") == extension:
             if (
-                width > previous_width
+                height > previous_height
                 or fps > previous_fps
                 or asr > previous_asr
                 or audio_channels > previous_audio_channels
-                or dr != previous_dr
+                or dr != "SDR"
             ):
                 current_best_format = format
-                if width > previous_width:
-                    previous_width = width
+                if height > previous_height:
+                    previous_height = height
                 if fps > previous_fps:
                     previous_fps = fps
                 if asr > previous_asr:
                     previous_asr = asr
                 if audio_channels > previous_audio_channels:
                     previous_audio_channels = audio_channels
-                if dr != previous_dr:
-                    previous_dr = dr
     return current_best_format
 
 
@@ -135,6 +133,7 @@ def enumerate_is_low_resolution(formats, min_resolution):
 
 
 def convert_seconds(seconds):
+    seconds = max(0, seconds)
     hr = int(seconds / 3600)
     mn = int((seconds / 60) % 60)
     sc = int(seconds % 60)
@@ -176,3 +175,55 @@ def sleep_calc(duration):
     if duration < 1800:
         return f"Sleeping for {sleep_time}", duration
     return f"Sleeping for {sleep_time}, waking at {eta.strftime('%d %H:%M:%S (%A)')}", duration
+
+
+def trim_mean(samples, trim=0.05):
+    if not samples:
+        return 0
+    sorted_samples = sorted(samples)
+    trim_count = int(len(samples) * trim)
+    if trim_count > 0:
+        trimmed = sorted_samples[trim_count:-trim_count]
+        return mean(trimmed) if trimmed else mean(sorted_samples)
+    return mean(sorted_samples)
+
+
+def exp_mean(samples, factor=0.05):
+    it = iter(samples)
+    try:
+        ema = next(it)
+    except StopIteration:
+        return 0
+    a = factor
+    b = 1 - a
+    for x in it:
+        ema = a * x + b * ema
+    return ema
+
+
+def mw_median(samples):
+    samples_list = list(samples)
+    windows = [
+        mean(samples_list[-50:]),
+        mean(samples_list[-100:]),
+        mean(samples_list[-200:]),
+        mean(samples_list[-500:]),
+        mean(samples_list),
+    ]
+    return median(windows)
+
+
+def mw_mean(samples):
+    samples_list = list(samples)
+    windows = [
+        median(samples_list[-50:]),
+        median(samples_list[-100:]),
+        median(samples_list[-200:]),
+        median(samples_list[-500:]),
+        median(samples_list),
+    ]
+    return mean(windows)
+
+
+def normal_mean(samples):
+    return mean(samples)
