@@ -160,6 +160,7 @@ def process_download(url_list, availability, depth=0):
     cli.tree_print(f"{availability}", index=depth, line=1)
     logger = Logger()
     ydl_opts = dict(YDL_OPTS)
+    ydl_opts["download_archive"] = f"{ARCHIVED_FILE}"
     ydl_opts["logger"] = logger
     rems = deque([int(time.time())] * MEDIAN_LENGTH, maxlen=MEDIAN_LENGTH)
     virt_progress_hook, virt_postprocessor_hook = _make_hooks(depth, rems)
@@ -249,6 +250,7 @@ def run_ytdlp():
     logger = Logger()
     ydl_opts = dict(YDL_OPTS)
     ydl_opts["logger"] = logger
+    ydl_opts["download_archive"] = f"{ARCHIVED_FILE}"
     ydl_opts = cast("_Params", dict(ydl_opts))
     try:
         with YoutubeDL(ydl_opts) as ydl:

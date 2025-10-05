@@ -16,7 +16,7 @@ import util
 from cli_print import CLIPrint
 from logger import Logger
 
-LOCAL_VERSION = "2.07"
+LOCAL_VERSION = "2.08"
 OUTPUT_DIRECTORY = "/Volumes/Delt/Prosjekter/yt-dlp/.cbtv2"
 TEMP_DIRECTORY = "/Volumes/Ekstern/.cbttemp"
 
