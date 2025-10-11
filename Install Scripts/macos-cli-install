@@ -1814,8 +1814,8 @@ main() {
         # libpng - cmake, libtool, zlib (mac)
         install_package "libpng" "cmake" "" "" "" "git" "https://github.com/pnggroup/libpng.git" "master" "YES" "YES"
 
-        # gobject-introspection
-        install_package "gobject-introspection" "meson" "" "" "" "git" "https://github.com/GNOME/gobject-introspection.git" "main" "YES" "YES"
+        # gobject-introspection (versioned)
+        install_package "gobject-introspection" "meson" "" "" "" "git" "https://github.com/GNOME/gobject-introspection.git" "main" "YES" "YES" "1.86.0"
 
         # freetype - cmake, pkgconf, libpng, bzip2 (mac), zlib (mac)
         install_package "freetype" "cmake" "" "" "" "git" "https://github.com/freetype/freetype.git" "master" "YES" "YES"
@@ -2171,6 +2171,7 @@ main() {
         export PATH="$PATH:${SOURCES_DIRECTORY}/depot_tools"
 
         # angle
+        # xcodebuild -downloadComponent MetalToolchain
         install_package "angle" "custom" "" "" "" "none" "" "" "YES" "YES"
 
         # libepoxy

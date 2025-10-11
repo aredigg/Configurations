@@ -204,6 +204,7 @@ def exp_mean(samples, factor=0.05):
 def mw_median(samples):
     samples_list = list(samples)
     windows = [
+        mean(samples_list[-25:]),
         mean(samples_list[-50:]),
         mean(samples_list[-100:]),
         mean(samples_list[-200:]),
@@ -216,6 +217,7 @@ def mw_median(samples):
 def mw_mean(samples):
     samples_list = list(samples)
     windows = [
+        median(samples_list[-25:]),
         median(samples_list[-50:]),
         median(samples_list[-100:]),
         median(samples_list[-200:]),

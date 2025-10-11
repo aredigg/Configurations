@@ -1,3 +1,4 @@
+import datetime
 import os
 import random
 import shutil
@@ -5,16 +6,15 @@ import time
 from collections import deque
 from typing import TYPE_CHECKING, cast
 
-from yt_dlp import YoutubeDL
-
 import util
 from cli_print import CLIPrint
 from logger import Logger
+from yt_dlp import YoutubeDL
 
 if TYPE_CHECKING:
     from yt_dlp import _Params
 
-LOCAL_VERSION = "2.06"
+LOCAL_VERSION = "2.08"
 DEBUG = True
 
 ACCEPT_VERTICAL = False
@@ -169,10 +169,12 @@ def process_download(url_list, availability, depth=0):
     ydl_opts = cast("_Params", dict(ydl_opts))
     with YoutubeDL(ydl_opts) as ydl:
         ydl.download(url_list)
+    errors = 0
     while logger.if_error():
         extractor, id, error_msg = logger.read_error()
-        cli.status_line(f"({extractor}) {id} {error_msg}")
-        time.sleep(10)
+        cli.status_line(f"({extractor}) {id} \033[91m{error_msg}\033[0m")
+        errors += 1
+    sleep_header(errors * 60)
 
 
 def process_channel(ydl, channel, depth=0, index=0):
@@ -203,26 +205,69 @@ def process_channel(ydl, channel, depth=0, index=0):
                 line=1,
             )
             util.save_list_to_file(f"{info.get('id')}_formats", util.list_all_formats(formats), TEMP_DIRECTORY)
+            upload_date = datetime.datetime.strptime(upload_date, "%Y-%m-%d").date()
             if not ACCEPT_VERTICAL and util.enumerate_is_vertical(formats):
                 cli.tree_print("Vertical", index=depth + 1, line=1)
                 util.add_video_id(f"{ARCHIVED_FILE}", f"{info.get('extractor')} {info.get('id')}")
             elif util.enumerate_is_low_resolution(formats, MINIMUM_RESOLUTION):
                 cli.tree_print("Low resolution", index=depth + 1, line=1)
+            elif util.enumerate_is_low_resolution(
+                formats, 1900
+            ) and upload_date >= datetime.date.today() - datetime.timedelta(days=2):
+                cli.tree_print("Held for later due resolution", index=depth + 1, line=1)
             else:
                 availability = info.get("availability")
                 process_download([video_url], availability, depth + 1)
                 # sleep
                 output, duration = util.sleep_calc(min(int(info.get("duration") or 0) >> 1, random.randint(0, 1800)))
                 if output:
-                    # cli.status_line(output)
-                    # util.sleep_now(duration)
                     sleep_header(duration)
 
 
 def sleep_header(duration):
+    end_time = time.time() + duration
+    while (remaining := end_time - time.time()) > 0:
+        hr, mn, sc = util.convert_seconds(int(remaining))
+        if hr > 24:
+            cli.header_print(f"Sleeping for {hr // 24} days, {hr % 24} hours", 2, color=CLIPrint.DIM_GRAY)
+            sleep_time = sc or (mn * 60 if mn else 3600)
+        elif hr > 8:
+            cli.header_print(f"Sleeping for {hr} hours", 2, color=CLIPrint.TEAL)
+            sleep_time = sc or (mn * 60 if mn else 3600)
+        elif hr > 0 or mn > 0:
+            cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 2, color=CLIPrint.TEAL)
+            sleep_time = sc or 60
+        else:
+            cli.header_print(f"{sc:02} s remaining", 2, color=CLIPrint.RED)
+            sleep_time = 1
+        time.sleep(min(sleep_time, remaining))
+    cli.header_print("", 2, color=CLIPrint.DEFAULT)
+
+
+def old_sleep_header(duration):
     while duration > 0:
         hr, mn, sc = util.convert_seconds(duration)
-        if hr > 0 or mn > 0:
+        if hr > 24:
+            cli.header_print(f"Sleeping for {hr // 24} days, {hr % 24} hours", 2, color=CLIPrint.TEAL)
+            time.sleep(sc)
+            duration -= sc + 1
+            if mn > 0:
+                time.sleep(mn * 60)
+                duration -= mn * 60 + 1
+            else:
+                time.sleep(3600)
+                duration -= 3600 + 1
+        elif hr > 8:
+            cli.header_print(f"Sleeping for {hr} hours", 2, color=CLIPrint.TEAL)
+            time.sleep(sc)
+            duration -= sc + 1
+            if mn > 0:
+                time.sleep(mn * 60)
+                duration -= mn * 60 + 1
+            else:
+                time.sleep(3600)
+                duration -= 3600 + 1
+        elif hr > 0 or mn > 0:
             cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 2, color=CLIPrint.TEAL)
             if sc > 0:
                 time.sleep(sc)
@@ -256,12 +301,16 @@ def run_ytdlp():
         with YoutubeDL(ydl_opts) as ydl:
             for channel in channels:
                 process_channel(ydl, channel, depth=0, index=0)
+                errors = 0
                 while logger.if_error():
                     extractor, id, error_msg = logger.read_error()
                     if id == channel:
-                        cli.status_line(f"({extractor}) \033[1m{channel}\033[0m {error_msg}")
+                        cli.status_line(f"({extractor}) {channel} \033[91m{error_msg}\033[0m")
                     else:
-                        cli.status_line(f"({extractor}) \033[1m{channel}\033[0m | {id} {error_msg}")
+                        cli.status_line(f"({extractor}) {channel} | \033[37m{id}\033[0m -> \033[91m{error_msg}\033[0m")
+                    sleep_header(15)
+                    errors += 1
+                sleep_header(errors * 600)
     except SystemExit as e:
         cli.status_line(f"SystemExit {str(e)}")
         ret_status = -1

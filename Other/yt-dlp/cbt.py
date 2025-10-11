@@ -9,16 +9,17 @@ import signal
 import time
 from typing import TYPE_CHECKING, Any, Mapping, cast
 
-from yt_dlp import YoutubeDL
-from yt_dlp.utils import RejectedVideoReached
-
 import util
 from cli_print import CLIPrint
 from logger import Logger
+from yt_dlp import YoutubeDL
+from yt_dlp.utils import RejectedVideoReached
 
-LOCAL_VERSION = "2.08"
+LOCAL_VERSION = "2.14"
 OUTPUT_DIRECTORY = "/Volumes/Delt/Prosjekter/yt-dlp/.cbtv2"
 TEMP_DIRECTORY = "/Volumes/Ekstern/.cbttemp"
+
+MINIMUM_RESOLUTION = 1000
 
 CHANNELS_FILE = f"{OUTPUT_DIRECTORY}/channels"
 CHANNELS_PREFIX = f"{OUTPUT_DIRECTORY}/channel_prefix"
@@ -28,8 +29,8 @@ YDL_OPTS = {
     "multistreams": True,
     "retries": 5,
     "sleep_interval": 10,
-    "max_sleep_interval": 20,
-    "sleep_interval_requests": 0.5,
+    "max_sleep_interval": 60,
+    "sleep_interval_requests": 0.2,
     "paths": {
         "temp": f"{TEMP_DIRECTORY}/temp",
         "home": f"{OUTPUT_DIRECTORY}/home",
@@ -50,7 +51,7 @@ YDL_OPTS = {
     "postprocessor_args": {"ffmpeg": ["-loglevel", "error", "-hide_banner", "-nostats"]},
 }
 MIN_DURATION = 300
-MAX_SLOTS = 3
+MAX_SLOTS = 4
 MAX_HEADERS = 4
 DEBUG = False
 
@@ -135,53 +136,85 @@ def run_ytdlp():
     # set up terminal
     for n in range(MAX_SLOTS):
         cli.slot_print("○", n)
-    # date limits
-    previous_date = datetime.datetime.now(datetime.timezone.utc).date()
     # try channels
     ydl_opts = cast("YDLParams", dict(ydl_opts))
     running = True
     try:
         with YoutubeDL(ydl_opts) as ydl:
             while running:
+                # date limits
+                previous_date = datetime.datetime.now(datetime.timezone.utc).date()
                 finished_channels = []
                 while previous_date == datetime.datetime.now(datetime.timezone.utc).date():
                     while all(slot for slot in slots):
                         _wait_for_slot(slots)
-                    for counter, channel in enumerate(channels):
-                        cli.header_print(f"{previous_date} {counter:>3}/{len(channels)}", 2)
-                        if channel in finished_channels:
-                            cli.status_line(f"\033[1m{channel}\033[0m active or already done")
-                            continue
-                        if all(slot for slot in slots):
-                            # Skip all remaining channels while we wait for slot
-                            continue
-                        if info := ydl.extract_info(channels_prefix + channel, download=False, process=False):
-                            slot_index = next(i for i, slot in enumerate(slots) if not slot)
-                            if slot_index is not None:
-                                formats = info.get("formats") or []
-                                cli.status_line(f"\033[1m{channel}\033[0m {util.get_best_format(formats)}")
-                                cli.slot_print(
-                                    f"\033[5m●\033[0m {util.get_best_resolution(formats)} \033[1m{channel:20}\033[0m",
-                                    slot_index,
-                                )
-                                p, q = download_manager(channels_prefix, channel, slot_index, postprocess_lock)
-                                slots[slot_index] = {"process": p, "queue": q, "channel": channel}
-                                finished_channels.append(channel)
-                        while logger.if_error():
-                            _, id, error_msg = logger.read_error()
-                            if id == channel:
-                                cli.status_line(f"\033[1m{channel}\033[0m {error_msg}")
+                    offline_channels = []
+                    for minimum_resolution in [int(MINIMUM_RESOLUTION * 1.4), MINIMUM_RESOLUTION]:
+                        for counter, channel in enumerate(channels, start=1):
+                            cli.header_print(f"{previous_date} {counter:>3}/{len(channels)}", 2)
+                            if channel in finished_channels or channel in offline_channels:
+                                cli.status_line(f"\033[1m{channel}\033[0m skipped")
+                                continue
+                            if all(slot for slot in slots):
+                                # Skip all remaining channels while we wait for slot
+                                continue
+                            if info := ydl.extract_info(channels_prefix + channel, download=False, process=False):
+                                slot_index = next(i for i, slot in enumerate(slots) if not slot)
+                                if slot_index is not None:
+                                    formats = info.get("formats") or []
+                                    cli.status_line(f"\033[1m{channel}\033[0m {util.get_best_format(formats)}")
+                                    color = ""
+                                    if counter < 25:
+                                        color = "\033[38;2;212;175;55;1m"
+                                    elif counter < 50:
+                                        color = "\033[38;2;170;170;170;1m"
+                                    elif counter < 100:
+                                        color = "\033[38;2;241;156;187;1m"
+                                    elif counter < 200:
+                                        color = "\033[38;2;137;207;240;1m"
+                                    if check_slots(channel, slots):
+                                        cli.status_line(f"\033[1m{channel}\033[0m active")
+                                    elif not util.enumerate_is_low_resolution(formats, minimum_resolution):
+                                        res = util.get_best_resolution(formats)
+                                        if previous_date == datetime.datetime.now(datetime.timezone.utc).date():
+                                            cli.slot_print(
+                                                f"\033[5m●\033[0m {res:9} {color}{channel:20}\033[0m",
+                                                slot_index,
+                                            )
+                                        else:
+                                            cli.slot_print(
+                                                f"\033[94;5m●\033[0m {res:9} {color}{channel:20}\033[0m",
+                                                slot_index,
+                                            )
+                                        p, q = download_manager(channels_prefix, channel, slot_index, postprocess_lock)
+                                        slots[slot_index] = {"process": p, "queue": q, "channel": channel}
+                                        finished_channels.append(channel)
+                                    elif util.enumerate_is_low_resolution(formats, MINIMUM_RESOLUTION):
+                                        finished_channels.append(channel)
+                                        cli.status_line(f"\033[1m{channel}\033[0m Resolution < {MINIMUM_RESOLUTION}")
+                                    else:
+                                        cli.slot_print(
+                                            "○",
+                                            slot_index,
+                                        )
+                                        cli.status_line(f"\033[1m{channel}\033[0m Resolution < {minimum_resolution}")
                             else:
-                                cli.status_line(f"\033[1m{channel}\033[0m | {id} {error_msg}")
-                        if DEBUG:
-                            dmsg = []
-                            while logger.count() > 0:
-                                dmsg.append(logger.read())
-                            cli.debug_print(dmsg)
-                        else:
-                            logger.flush()
-                        _poll_workers(slots)
-                    cli.header_print(f"{previous_date} {'---':>3}/{len(channels)}", 2)
+                                offline_channels.append(channel)
+                            while logger.if_error():
+                                _, id, error_msg = logger.read_error()
+                                if id == channel:
+                                    cli.status_line(f"\033[1m{channel}\033[0m {error_msg}")
+                                else:
+                                    cli.status_line(f"\033[1m{channel}\033[0m | {id} {error_msg}")
+                            if DEBUG:
+                                dmsg = []
+                                while logger.count() > 0:
+                                    dmsg.append(logger.read())
+                                cli.debug_print(dmsg)
+                            else:
+                                logger.flush()
+                            _poll_workers(slots)
+                    cli.header_print(f"{previous_date}", 2)
     except SystemExit as e:
         cli.status_line(f"SystemExit {str(e)}")
         ret_status = -1
@@ -202,6 +235,13 @@ def run_ytdlp():
         except KeyboardInterrupt:
             return ret_status
     return ret_status
+
+
+def check_slots(channel, slots):
+    for slot in slots:
+        if slot and slot["channel"] == channel:
+            return True
+    return False
 
 
 def download_manager(channels_prefix, channel, slot_index, lock):
@@ -267,10 +307,10 @@ def _poll_workers(slots):
                     if isinstance(msg, tuple) and msg and msg[0] in ("done", "error"):
                         key, value = msg
                         if key == "done":
-                            cli.slot_print(f"○ {' ':9} {c:20}", i)
+                            cli.slot_print(f"○ \033[90m{' ':9}\033[0m {c:20}", i)
                             cli.status_line(f"{c} Done: {value}")
                         else:
-                            cli.slot_print(f"○ {' ':9} {c:20} | \033[31mError:\033[39m {value}", i)
+                            cli.slot_print(f"○ \033[90m{' ':9} {c:20}\033[0m | \033[31mError:\033[39m {value}", i)
                             cli.status_line(f"{c} Error: {value}")
                         state_changed = True
                 except Exception:
@@ -300,6 +340,7 @@ def _wait_for_slot(slots):
 def _shutdown_slots(slots):
     for slot in slots:
         if slot:
+            cli.status_line(f"Slot(s) shutdown: {slot['channel']}")
             p = slot.get("process")
             q = slot.get("queue")
             if p and p.is_alive():
@@ -386,7 +427,7 @@ def common_hook(hook, data, slot_index=None):
                 else:
                     cli.status_line(f"Error with file: {filename}")
                 cli.status_line(f"{title} rejected: {elapsed} s < {MIN_DURATION} s")
-                cli.slot_print(f"● {resolution} \033[1m{id:20}\033[0m | Rejected", slot_index)
+                cli.slot_print(f"● {resolution} \033[90m{id:20}\033[0m | Rejected", slot_index)
                 raise RejectedVideoReached(f"Duration {elapsed} s too short")
         tf = util.time_formatted(*util.convert_seconds(elapsed))
         output = f"{resolution:9} \033[1m{id:20}\033[0m | {status} download, {int(total_bytes >> 20)} MB {tf}"
