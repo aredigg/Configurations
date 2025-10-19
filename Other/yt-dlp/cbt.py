@@ -9,13 +9,14 @@ import signal
 import time
 from typing import TYPE_CHECKING, Any, Mapping, cast
 
-import util
-from cli_print import CLIPrint
-from logger import Logger
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import RejectedVideoReached
 
-LOCAL_VERSION = "2.14"
+import util
+from cli_print import CLIPrint
+from logger import Logger
+
+LOCAL_VERSION = "2.16"
 OUTPUT_DIRECTORY = "/Volumes/Delt/Prosjekter/yt-dlp/.cbtv2"
 TEMP_DIRECTORY = "/Volumes/Ekstern/.cbttemp"
 
@@ -30,7 +31,7 @@ YDL_OPTS = {
     "retries": 5,
     "sleep_interval": 10,
     "max_sleep_interval": 60,
-    "sleep_interval_requests": 0.2,
+    "sleep_interval_requests": 0.01,
     "paths": {
         "temp": f"{TEMP_DIRECTORY}/temp",
         "home": f"{OUTPUT_DIRECTORY}/home",
@@ -54,6 +55,7 @@ MIN_DURATION = 300
 MAX_SLOTS = 4
 MAX_HEADERS = 4
 DEBUG = False
+OFFLINE_WINDOW = 20
 
 cli = CLIPrint(MAX_SLOTS, MAX_HEADERS, TEMP_DIRECTORY + "/log", DEBUG)
 
@@ -119,6 +121,16 @@ def run_ytdlp():
     try:
         with open(f"{CHANNELS_FILE}", "r") as afile:
             channels = [line.strip() for line in afile if line.strip() and not line.startswith("#")]
+        if len(channels) > len(set(channels)):
+            # Remove duplicates
+            temp_channels = []
+            for channel in channels:
+                if channel not in temp_channels:
+                    temp_channels.append(channel)
+            with open(f"{CHANNELS_FILE}", "w") as afile:
+                for channel in temp_channels:
+                    afile.write(f"{channel}\n")
+            channels = temp_channels
         with open(f"{CHANNELS_PREFIX}", "r") as afile:
             channels_prefix = afile.readline().strip()
     except FileNotFoundError:
@@ -138,6 +150,7 @@ def run_ytdlp():
         cli.slot_print("○", n)
     # try channels
     ydl_opts = cast("YDLParams", dict(ydl_opts))
+    offline_channels = {}
     running = True
     try:
         with YoutubeDL(ydl_opts) as ydl:
@@ -146,15 +159,27 @@ def run_ytdlp():
                 previous_date = datetime.datetime.now(datetime.timezone.utc).date()
                 finished_channels = []
                 while previous_date == datetime.datetime.now(datetime.timezone.utc).date():
-                    while all(slot for slot in slots):
-                        _wait_for_slot(slots)
-                    offline_channels = []
-                    for minimum_resolution in [int(MINIMUM_RESOLUTION * 1.4), MINIMUM_RESOLUTION]:
+                    for minimum_resolution in [int(MINIMUM_RESOLUTION * 1.4)] + [MINIMUM_RESOLUTION] * 10:
+                        while all(slot for slot in slots):
+                            _wait_for_slot(slots)
                         for counter, channel in enumerate(channels, start=1):
-                            cli.header_print(f"{previous_date} {counter:>3}/{len(channels)}", 2)
-                            if channel in finished_channels or channel in offline_channels:
+                            color = ""
+                            if counter < 25:
+                                color = "\033[38;2;212;175;55;1m"
+                            elif counter < 50:
+                                color = "\033[38;2;140;140;150;1m"
+                            elif counter < 100:
+                                color = "\033[38;2;241;156;187;1m"
+                            elif counter < 200:
+                                color = "\033[38;2;137;207;240;1m"
+                            cli.header_print(f"{previous_date} {color}{counter:>3}\033[0m/{len(channels)}", 2)
+                            if channel in finished_channels:
                                 cli.status_line(f"\033[1m{channel}\033[0m skipped")
                                 continue
+                            if channel in offline_channels:
+                                if (remaining := (offline_channels[channel] - time.time()) / 60) > 0:
+                                    cli.status_line(f"\033[1m{channel}\033[0m {remaining:.0f} minutes until retry")
+                                    continue
                             if all(slot for slot in slots):
                                 # Skip all remaining channels while we wait for slot
                                 continue
@@ -163,15 +188,6 @@ def run_ytdlp():
                                 if slot_index is not None:
                                     formats = info.get("formats") or []
                                     cli.status_line(f"\033[1m{channel}\033[0m {util.get_best_format(formats)}")
-                                    color = ""
-                                    if counter < 25:
-                                        color = "\033[38;2;212;175;55;1m"
-                                    elif counter < 50:
-                                        color = "\033[38;2;170;170;170;1m"
-                                    elif counter < 100:
-                                        color = "\033[38;2;241;156;187;1m"
-                                    elif counter < 200:
-                                        color = "\033[38;2;137;207;240;1m"
                                     if check_slots(channel, slots):
                                         cli.status_line(f"\033[1m{channel}\033[0m active")
                                     elif not util.enumerate_is_low_resolution(formats, minimum_resolution):
@@ -193,13 +209,9 @@ def run_ytdlp():
                                         finished_channels.append(channel)
                                         cli.status_line(f"\033[1m{channel}\033[0m Resolution < {MINIMUM_RESOLUTION}")
                                     else:
-                                        cli.slot_print(
-                                            "○",
-                                            slot_index,
-                                        )
                                         cli.status_line(f"\033[1m{channel}\033[0m Resolution < {minimum_resolution}")
                             else:
-                                offline_channels.append(channel)
+                                offline_channels[channel] = time.time() + OFFLINE_WINDOW * 60
                             while logger.if_error():
                                 _, id, error_msg = logger.read_error()
                                 if id == channel:
@@ -214,6 +226,13 @@ def run_ytdlp():
                             else:
                                 logger.flush()
                             _poll_workers(slots)
+                        time.sleep(5)
+                        for i, slot in enumerate(slots):
+                            if not slot:
+                                cli.slot_print(
+                                    "○",
+                                    i,
+                                )
                     cli.header_print(f"{previous_date}", 2)
     except SystemExit as e:
         cli.status_line(f"SystemExit {str(e)}")
@@ -381,6 +400,7 @@ def postprocessor_hook(data):
 
 
 def common_hook(hook, data, slot_index=None):
+    processes = {"Merger": "Merge", "MoveFiles": "Move", "FixupM3u8": "Fixup", "": "Unknown"}
     output = ""
     # save data struct to a file
     if DEBUG:
@@ -433,7 +453,7 @@ def common_hook(hook, data, slot_index=None):
         output = f"{resolution:9} \033[1m{id:20}\033[0m | {status} download, {int(total_bytes >> 20)} MB {tf}"
     elif hook == "postprocessor":
         post_status = data.get("postprocessor") or ""
-        output = f"{resolution:9} {id:20} | {post_status} {status}"
+        output = f"{resolution:9} {id:20} | {processes[post_status]} {status}"
     if slot_index is not None:
         cli.slot_print("● " + output, slot_index)
     else:

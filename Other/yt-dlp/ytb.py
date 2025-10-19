@@ -6,18 +6,20 @@ import time
 from collections import deque
 from typing import TYPE_CHECKING, cast
 
+from yt_dlp import YoutubeDL
+
 import util
 from cli_print import CLIPrint
 from logger import Logger
-from yt_dlp import YoutubeDL
 
 if TYPE_CHECKING:
     from yt_dlp import _Params
 
-LOCAL_VERSION = "2.08"
+LOCAL_VERSION = "2.11"
 DEBUG = True
 
 ACCEPT_VERTICAL = False
+ACCEPT_LOW_RESOLUTION = False
 MINIMUM_RESOLUTION = 700
 
 OUTPUT_DIRECTORY = "/Volumes/Delt/YouTube"
@@ -110,8 +112,8 @@ def progress_hook(data, rems, depth=0):
     elif status == "finished":
         progress = PROGRESS_LENGTH
         remaining = 0
-    rem = util.time_formatted(*util.convert_seconds(remaining))
-    eta = util.time_formatted(*util.convert_to_time(remaining))
+    rem = util.time_formatted_short(*util.convert_seconds(remaining, incl_sec=False))
+    eta = util.time_formatted_short(*util.convert_to_time(remaining))
     cli.tree_print(
         f"{elapsed}/{rem} {ext} {'◼' * progress}{'◻' * (PROGRESS_LENGTH - progress)} {frs}ETA {eta}",
         index=depth,
@@ -174,6 +176,7 @@ def process_download(url_list, availability, depth=0):
         extractor, id, error_msg = logger.read_error()
         cli.status_line(f"({extractor}) {id} \033[91m{error_msg}\033[0m")
         errors += 1
+        sleep_header(5)
     sleep_header(errors * 60)
 
 
@@ -209,12 +212,17 @@ def process_channel(ydl, channel, depth=0, index=0):
             if not ACCEPT_VERTICAL and util.enumerate_is_vertical(formats):
                 cli.tree_print("Vertical", index=depth + 1, line=1)
                 util.add_video_id(f"{ARCHIVED_FILE}", f"{info.get('extractor')} {info.get('id')}")
-            elif util.enumerate_is_low_resolution(formats, MINIMUM_RESOLUTION):
+                sleep_header(10)
+            elif not ACCEPT_LOW_RESOLUTION and util.enumerate_is_low_resolution(formats, MINIMUM_RESOLUTION):
                 cli.tree_print("Low resolution", index=depth + 1, line=1)
+                if upload_date < datetime.date.today() - datetime.timedelta(weeks=200):
+                    util.add_video_id(f"{ARCHIVED_FILE}", f"{info.get('extractor')} {info.get('id')}")
+                sleep_header(10)
             elif util.enumerate_is_low_resolution(
                 formats, 1900
             ) and upload_date >= datetime.date.today() - datetime.timedelta(days=2):
                 cli.tree_print("Held for later due resolution", index=depth + 1, line=1)
+                sleep_header(10)
             else:
                 availability = info.get("availability")
                 process_download([video_url], availability, depth + 1)
@@ -234,11 +242,14 @@ def sleep_header(duration):
         elif hr > 8:
             cli.header_print(f"Sleeping for {hr} hours", 2, color=CLIPrint.TEAL)
             sleep_time = sc or (mn * 60 if mn else 3600)
-        elif hr > 0 or mn > 0:
+        elif hr > 0:
             cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 2, color=CLIPrint.TEAL)
             sleep_time = sc or 60
+        elif mn > 1:
+            cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 2, color=CLIPrint.BLUE)
+            sleep_time = sc or 60
         else:
-            cli.header_print(f"{sc:02} s remaining", 2, color=CLIPrint.RED)
+            cli.header_print(f"Sleep {sc + (mn * 60):02} s", 2, color=CLIPrint.RED)
             sleep_time = 1
         time.sleep(min(sleep_time, remaining))
     cli.header_print("", 2, color=CLIPrint.DEFAULT)
@@ -268,6 +279,7 @@ def old_sleep_header(duration):
                 time.sleep(3600)
                 duration -= 3600 + 1
         elif hr > 0 or mn > 0:
+            hr, mn, _ = util.convert_seconds(duration, incl_sec=False)
             cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 2, color=CLIPrint.TEAL)
             if sc > 0:
                 time.sleep(sc)
@@ -308,9 +320,10 @@ def run_ytdlp():
                         cli.status_line(f"({extractor}) {channel} \033[91m{error_msg}\033[0m")
                     else:
                         cli.status_line(f"({extractor}) {channel} | \033[37m{id}\033[0m -> \033[91m{error_msg}\033[0m")
-                    sleep_header(15)
+                    sleep_header(5)
                     errors += 1
                 sleep_header(errors * 600)
+            sleep_header(3600)
     except SystemExit as e:
         cli.status_line(f"SystemExit {str(e)}")
         ret_status = -1

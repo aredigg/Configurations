@@ -132,16 +132,24 @@ def enumerate_is_low_resolution(formats, min_resolution):
     return height < min_resolution
 
 
-def convert_seconds(seconds):
+def convert_seconds(seconds, incl_sec=True):
     seconds = max(0, seconds)
     hr = int(seconds / 3600)
     mn = int((seconds / 60) % 60)
     sc = int(seconds % 60)
-    return hr, mn, sc
+    if incl_sec:
+        return hr, mn, sc
+    if sc > 0:
+        mn += 1
+    return hr, mn % 60, 0
 
 
 def time_formatted(hr, mn, sc):
     return f"{hr:02}:{mn:02}:{sc:02}"
+
+
+def time_formatted_short(hr, mn, sc=0):
+    return f"{hr:02}:{mn:02}"
 
 
 def convert_to_time(seconds=0):

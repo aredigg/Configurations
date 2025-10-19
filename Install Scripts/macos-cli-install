@@ -1002,6 +1002,9 @@ install_make_only() {
         if [[ $package == "x265" ]]; then
             print_status $package "INFO" "Making"
             ./make-Makefiles.bash
+        elif [[ $package == "exiftool" ]]; then
+            print_status $package "INFO" "Making"
+            perl Makefile.PL
         fi
         print_status $package "INFO" "Configuring"
         if [[ -f "${source_directory}/makefile" ]]; then
@@ -1099,6 +1102,11 @@ install_prebuilt() {
             sudo cp -R "${source_directory}/"config_* "${source_directory}/features" "${source_directory}/plugins" "${source_directory}/bin" "$INSTALL_PREFIX/share/java/jdtls"
             sudo mkdir -p "$INSTALL_PREFIX/bin"
             sudo ln -fs "$INSTALL_PREFIX/share/java/jdtls/bin/jdtls" "$INSTALL_PREFIX/bin/jdtls"
+        elif [[ $package == "exiftool" ]]; then
+            print_status $package "INFO" "Installing"
+            local PERL_CONFIG_DIR="/Library/Perl/$(perl -e 'printf "%vd", $^V' | cut -d. -f1-2)"
+            sudo cp -rPf "$source_directory/exiftool" "$INSTALL_PREFIX/bin"
+            sudo cp -rPf "$source_directory/lib/" "$PERL_CONFIG_DIR/"
         else
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
@@ -2346,7 +2354,13 @@ main() {
 
         # postgresql (versioned)
         install_package "postgresql" "meson" "" "" "" "git" "https://git.postgresql.org/git/postgresql.git" "REL_17_STABLE" "YES" "YES"
-#        install_package "postgresql" "meson" "" "" "" "git" "https://github.com/postgres/postgres.git" "REL_17_STABLE" "YES" "YES"
+        # install_package "postgresql" "meson" "" "" "" "git" "https://github.com/postgres/postgres.git" "REL_17_STABLE" "YES" "YES"
+
+        # qt5 (versioned) too new cmake must fix
+        # install_package "qt5" "cmake" "" "" "" "git" "git://code.qt.io/qt/qt5.git" "dev" "YES" "YES"
+
+        # exiftool (versioned)
+        install_package "exiftool" "prebuilt" "" "" "" "https" "https://downloads.sourceforge.net/exiftool/" "Image-ExifTool-13.39.tar.gz" "YES" "YES"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
