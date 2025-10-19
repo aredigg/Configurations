@@ -13,7 +13,7 @@ def main():
     main_loop = True
     ytb.cli.cls()
     ytb.cli.cursor_off()
-    ytb.cli.header_print(f"YT_DLP YTB {ytb.LOCAL_VERSION}, LOW {LOCAL_VERSION}", 1, color="\033[5;94m")
+    ytb.cli.header_print(f"YT_DLP YTB {ytb.LOCAL_VERSION}, LOW {LOCAL_VERSION}", 1, color="\033[92m")
     os.makedirs(ytb.TEMP_DIRECTORY, exist_ok=True)
     while main_loop:
         try:

@@ -15,7 +15,7 @@ from logger import Logger
 if TYPE_CHECKING:
     from yt_dlp import _Params
 
-LOCAL_VERSION = "2.11"
+LOCAL_VERSION = "2.12"
 DEBUG = True
 
 ACCEPT_VERTICAL = False
@@ -181,6 +181,7 @@ def process_download(url_list, availability, depth=0):
 
 
 def process_channel(ydl, channel, depth=0, index=0):
+    cli.header_print(f"Processing {channel}", 2, color=CLIPrint.DIM_GRAY)
     info = ydl.extract_info(channel, download=False, process=False)
     if info:
         info_type = info.get("_type") or ""
@@ -236,10 +237,10 @@ def sleep_header(duration):
     end_time = time.time() + duration
     while (remaining := end_time - time.time()) > 0:
         hr, mn, sc = util.convert_seconds(int(remaining))
-        if hr > 24:
+        if hr > 23:
             cli.header_print(f"Sleeping for {hr // 24} days, {hr % 24} hours", 2, color=CLIPrint.DIM_GRAY)
             sleep_time = sc or (mn * 60 if mn else 3600)
-        elif hr > 8:
+        elif hr > 7:
             cli.header_print(f"Sleeping for {hr} hours", 2, color=CLIPrint.TEAL)
             sleep_time = sc or (mn * 60 if mn else 3600)
         elif hr > 0:
@@ -249,48 +250,9 @@ def sleep_header(duration):
             cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 2, color=CLIPrint.BLUE)
             sleep_time = sc or 60
         else:
-            cli.header_print(f"Sleep {sc + (mn * 60):02} s", 2, color=CLIPrint.RED)
+            cli.header_print(f"Sleep {sc + (mn * 60):02} s", 2, color="\033[5m" + CLIPrint.BLUE)
             sleep_time = 1
         time.sleep(min(sleep_time, remaining))
-    cli.header_print("", 2, color=CLIPrint.DEFAULT)
-
-
-def old_sleep_header(duration):
-    while duration > 0:
-        hr, mn, sc = util.convert_seconds(duration)
-        if hr > 24:
-            cli.header_print(f"Sleeping for {hr // 24} days, {hr % 24} hours", 2, color=CLIPrint.TEAL)
-            time.sleep(sc)
-            duration -= sc + 1
-            if mn > 0:
-                time.sleep(mn * 60)
-                duration -= mn * 60 + 1
-            else:
-                time.sleep(3600)
-                duration -= 3600 + 1
-        elif hr > 8:
-            cli.header_print(f"Sleeping for {hr} hours", 2, color=CLIPrint.TEAL)
-            time.sleep(sc)
-            duration -= sc + 1
-            if mn > 0:
-                time.sleep(mn * 60)
-                duration -= mn * 60 + 1
-            else:
-                time.sleep(3600)
-                duration -= 3600 + 1
-        elif hr > 0 or mn > 0:
-            hr, mn, _ = util.convert_seconds(duration, incl_sec=False)
-            cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 2, color=CLIPrint.TEAL)
-            if sc > 0:
-                time.sleep(sc)
-                duration -= sc + 1
-            else:
-                time.sleep(60)
-                duration -= 60 + 1
-        else:
-            cli.header_print(f"{sc:02} s remaining", 2, color=CLIPrint.RED)
-            time.sleep(1)
-            duration -= 1
     cli.header_print("", 2, color=CLIPrint.DEFAULT)
 
 
