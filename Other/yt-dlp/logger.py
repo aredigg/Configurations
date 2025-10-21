@@ -1,19 +1,36 @@
 import re
 
+LOCAL_VERSION = "1.01"
+
 
 class Logger:
-    def __init__(self):
-        self.__messages = []
-        self.__error_messages = []
+    def __init__(self, max_len=100, clp=None):
+        self._messages = []
+        self._error_messages = []
+        self._max_len = max_len
+        self.LOCAL_VERSION = LOCAL_VERSION
+        self._cli_print = clp
+
+    def _append(self, msg):
+        if self._cli_print:
+            self._cli_print.debug_line(msg)
+        if len(self._messages) > self._max_len:
+            self._messages.pop(0)
+        self._messages.append(msg)
+
+    def _append_error(self, msg):
+        if len(self._error_messages) > self._max_len:
+            self._error_messages.pop(0)
+        self._error_messages.append(msg)
 
     def debug(self, msg):
-        self.__messages.append(msg)
+        self._append(msg)
 
     def info(self, msg):
-        self.__messages.append(msg)
+        self._append(msg)
 
     def warning(self, msg):
-        self.__messages.append(msg)
+        self._append(msg)
 
     def error(self, msg):
         msg = self._remove_ansi(msg)
@@ -29,25 +46,25 @@ class Logger:
                 if id.endswith(":"):
                     error_msg = " ".join(parts_msg[3:])
                     id = id[:-1]
-        self.__error_messages.append((extractor, id, error_msg))
-        self.__messages.append(msg)
+        self._append_error((extractor, id, error_msg))
+        self._append(msg)
 
     def _remove_ansi(self, string):
         code = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
         return code.sub("", string)
 
     def if_error(self):
-        return len(self.__error_messages) > 0
+        return len(self._error_messages) > 0
 
     def read_error(self):
-        return self.__error_messages.pop(0)
+        return self._error_messages.pop(0)
 
     def read(self):
-        return self.__messages.pop(0)
+        return self._messages.pop(0)
 
     def count(self):
-        return len(self.__messages)
+        return len(self._messages)
 
     def flush(self):
-        self.__messages.clear()
-        self.__error_messages.clear()
+        self._messages.clear()
+        self._error_messages.clear()

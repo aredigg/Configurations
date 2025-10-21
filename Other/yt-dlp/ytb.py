@@ -15,8 +15,9 @@ from logger import Logger
 if TYPE_CHECKING:
     from yt_dlp import _Params
 
-LOCAL_VERSION = "2.12"
-DEBUG = True
+LOCAL_VERSION = "2.13"
+DEBUG = False
+CLI_LOGGER = None
 
 ACCEPT_VERTICAL = False
 ACCEPT_LOW_RESOLUTION = False
@@ -27,6 +28,7 @@ CONFIG_DIRECTORY = OUTPUT_DIRECTORY + "/.config"
 CHANNELS_FILE = CONFIG_DIRECTORY + "/channels"
 ARCHIVED_FILE = CONFIG_DIRECTORY + "/archived"
 TEMP_DIRECTORY = "/Volumes/Ekstern/.temp"
+LOG_DIRECTORY = TEMP_DIRECTORY + "/log"
 
 MAX_HEADERS = 2
 PROGRESS_LENGTH = 40
@@ -64,7 +66,7 @@ YDL_OPTS = {
 }
 
 
-cli = CLIPrint(0, MAX_HEADERS, TEMP_DIRECTORY + "/log", DEBUG)
+cli = CLIPrint(0, MAX_HEADERS, CLI_LOGGER, DEBUG)
 
 
 def progress_hook(data, rems, depth=0):
@@ -176,7 +178,7 @@ def process_download(url_list, availability, depth=0):
         extractor, id, error_msg = logger.read_error()
         if extractor is None:
             if len(url_list) == 1:
-                cli.status_line(f"{url_list[0]} {ANSI.BrRed}{error_msg}{ANSI.Default}")
+                cli.status_line(f"{ANSI.BrRed}{error_msg}{ANSI.Default} {url_list[0]}")
             else:
                 cli.status_line(f"{ANSI.BrRed}{error_msg}{ANSI.Default}")
         else:
@@ -275,7 +277,11 @@ def run_ytdlp():
     except FileNotFoundError:
         cli.status_line(f"Channel file {CHANNELS_FILE} not found")
     random.shuffle(channels)
-    logger = Logger()
+    if DEBUG:
+        logger = Logger(clp=cli)
+    else:
+        logger = Logger()
+    cli.update_logger(logger)
     ydl_opts = dict(YDL_OPTS)
     ydl_opts["logger"] = logger
     ydl_opts["download_archive"] = f"{ARCHIVED_FILE}"

@@ -3,7 +3,9 @@ import re
 import time
 from shutil import get_terminal_size as size
 
-LOCAL_VERSION = "2.03"
+from logger import Logger
+
+LOCAL_VERSION = "2.05"
 
 
 class ANSI:
@@ -135,6 +137,8 @@ class ANSI:
 
     @staticmethod
     def len(text: str) -> int:
+        if len(text) < 1:
+            return 0
         code = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
         clean = code.sub("", text)
         return len(clean)
@@ -194,18 +198,21 @@ class BxDraw:
 
 
 class CLIPrint:
-    def __init__(self, slots: int = 1, headers: int = 2, logfile: str | None = None, debug: bool = False) -> None:
+    def __init__(self, slots: int = 1, headers: int = 2, logger: Logger | None = None, debug: bool = False) -> None:
         self._w: int = size().columns - 2
         self._h: int = size().lines
         self._slots: int = slots
         self._headers: int = headers
-        self._logfile: str | None = logfile
+        self._logger: Logger | None = logger
         self._debug: bool = debug
         self._lines: list[str | None] = []
         self._hlines: list[str | None] = [""] * self._headers
         self._slines: list[tuple[str, str, str, str] | None] = [("", "", "", "")] * self._slots
         self._mlines: list[list[str]] = []
         self._status: str = "CLI Print Ready"
+        self._debug_line: str = "Debug" if debug else ""
+        self._debug_timeout: float = time.time()
+        self._top_header: str = ""
         self._last_update: float = time.time()
         print(ANSI.CursorOff)
 
@@ -220,6 +227,13 @@ class CLIPrint:
         dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._status = f"{ANSI.Blue} ► {dt}   {ANSI.gray(pct=0, bg=False)} {text:{self._w - 25}.{self._w - 25}}"
         self._print_status()
+        self._update()
+
+    def debug_line(self, text: str) -> None:
+        dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._debug_line = f"{ANSI.Yellow} ► {dt}   {ANSI.BrYellow} {text:{self._w - 25}.{self._w - 25}}"
+        self._print_debug()
+        self._debug_timeout: float = time.time()
         self._update()
 
     def slot_print(self, content: tuple[str, str, str], index: int):
@@ -243,15 +257,25 @@ class CLIPrint:
         self._update()
 
     def header_print(self, text, index, color=ANSI.Default):
-        if index == 0:
+        if index == 0 and self._debug:
+            self._top_header = text
             text += f" (CLP {LOCAL_VERSION})"
+            if self._logger:
+                text += f" (LOG {self._logger.LOCAL_VERSION})"
         if index >= self._headers:
             self.status_line(f"Incorrect header {index} > " + text)
         if index < len(self._hlines):
             self._hlines[index] = f"{color}{text}{ANSI.Reset}"
         self._update()
 
+    def update_logger(self, logger: Logger | None):
+        self._logger = logger
+        if self._debug:
+            self.header_print(self._top_header, 0, ANSI.BrYellow)
+
     def _update(self) -> None:
+        if not self._debug and (self._debug_timeout + 20) < time.time():
+            self._debug_line = ""
         if self._w != size().columns or self._h != size().lines:
             self._w: int = size().columns - 2
             self._h: int = size().lines
@@ -265,23 +289,43 @@ class CLIPrint:
         print(ANSI.Home, end="")
         for line in self._lines:
             if line is not None:
+                while ANSI.len(line) > self._w:
+                    line = line[: (self._w - ANSI.len(line))]
                 print(line + ANSI.ClearEOL)
             else:
                 print(ANSI.ClearEOL)
         print(ANSI.ClearBelow)
         self._print_status()
+        if self._debug_line:
+            self._print_debug()
         self._last_update = time.time()
 
     def _print_status(self) -> None:
         diff = len(self._status) - ANSI.len(self._status)
         ln = (
-            ANSI.pos(1, self._h - 1)
+            ANSI.pos(1, self._h - 2)
             + ANSI.gray(pct=75, bg=True)
             + ANSI.gray(pct=0, bg=False)
-            + f" {self._status:<{self._w - 2}.{self._w - 2}} "
+            + f" {self._status} "
             + " " * diff
             + ANSI.ClearEOL
         )
+        while ANSI.len(ln) > self._w:
+            ln = ln[: (self._w - ANSI.len(ln))]
+        print(ln)
+
+    def _print_debug(self) -> None:
+        diff = len(self._debug_line) - ANSI.len(self._debug_line)
+        ln = (
+            ANSI.pos(1, self._h - 3)
+            + ANSI.gray(pct=25, bg=True)
+            + ANSI.BrYellow
+            + f" {self._debug_line} "
+            + " " * diff
+            + ANSI.ClearEOL
+        )
+        while ANSI.len(ln) > self._w:
+            ln = ln[: (self._w - ANSI.len(ln))]
         print(ln)
 
     def _hrline(self, top: bool) -> str:
@@ -396,7 +440,8 @@ class CLIPrint:
 
     def _redraw_slots(self, buffer: list[str | None]) -> None:
         if self._slines:
-            buffer.append(self._sshline())
+            for line in self._sshline().split("\n"):
+                buffer.append(line)
             for i, slot in enumerate(self._slines, start=1):
                 if slot:
                     time, status, res, channel = slot
@@ -407,5 +452,7 @@ class CLIPrint:
                         f" {res:<9.9}",
                         f"{channel}",
                     ]
-                    buffer.append(self._ssline(slot_content))
-            buffer.append(self._ssxline())
+                    for line in self._ssline(slot_content).split("\n"):
+                        buffer.append(line)
+            for line in self._ssxline().split("\n"):
+                buffer.append(line)
