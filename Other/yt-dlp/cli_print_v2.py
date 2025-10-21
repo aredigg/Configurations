@@ -3,7 +3,7 @@ import re
 import time
 from shutil import get_terminal_size as size
 
-LOCAL_VERSION = "2.02"
+LOCAL_VERSION = "2.03"
 
 
 class ANSI:
@@ -262,7 +262,7 @@ class CLIPrint:
         self._redraw_main_body(buffer)
         self._redraw_slots(buffer)
         self._lines = buffer
-        print(ANSI.Home)
+        print(ANSI.Home, end="")
         for line in self._lines:
             if line is not None:
                 print(line + ANSI.ClearEOL)
@@ -275,7 +275,7 @@ class CLIPrint:
     def _print_status(self) -> None:
         diff = len(self._status) - ANSI.len(self._status)
         ln = (
-            ANSI.pos(1, self._h - 2)
+            ANSI.pos(1, self._h - 1)
             + ANSI.gray(pct=75, bg=True)
             + ANSI.gray(pct=0, bg=False)
             + f" {self._status:<{self._w - 2}.{self._w - 2}} "
