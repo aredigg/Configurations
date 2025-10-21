@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 from yt_dlp import YoutubeDL
 
 import util
-from cli_print import CLIPrint
+from cli_print_v2 import ANSI, CLIPrint
 from logger import Logger
 
 if TYPE_CHECKING:
@@ -174,14 +174,20 @@ def process_download(url_list, availability, depth=0):
     errors = 0
     while logger.if_error():
         extractor, id, error_msg = logger.read_error()
-        cli.status_line(f"({extractor}) {id} \033[91m{error_msg}\033[0m")
+        if extractor is None:
+            if len(url_list) == 1:
+                cli.status_line(f"{url_list[0]} {ANSI.BrRed}{error_msg}{ANSI.Default}")
+            else:
+                cli.status_line(f"{ANSI.BrRed}{error_msg}{ANSI.Default}")
+        else:
+            cli.status_line(f"({extractor}) {id} {ANSI.BrRed}{error_msg}{ANSI.Default}")
         errors += 1
         sleep_header(5)
     sleep_header(errors * 60)
 
 
 def process_channel(ydl, channel, depth=0, index=0):
-    cli.header_print(f"Processing {channel}", 2, color=CLIPrint.DIM_GRAY)
+    cli.status_line(f"Processing {channel}")
     info = ydl.extract_info(channel, download=False, process=False)
     if info:
         info_type = info.get("_type") or ""
@@ -234,26 +240,29 @@ def process_channel(ydl, channel, depth=0, index=0):
 
 
 def sleep_header(duration):
+    # eta = util.time_formatted_short(*util.convert_to_time(duration))
+    # cli.status_line(f"Sleeping until {eta}")
     end_time = time.time() + duration
     while (remaining := end_time - time.time()) > 0:
         hr, mn, sc = util.convert_seconds(int(remaining))
         if hr > 23:
-            cli.header_print(f"Sleeping for {hr // 24} days, {hr % 24} hours", 2, color=CLIPrint.DIM_GRAY)
+            cli.header_print(f"Sleeping for {hr // 24} days, {hr % 24} hours", 1, color=ANSI.BrBlack)
             sleep_time = sc or (mn * 60 if mn else 3600)
         elif hr > 7:
-            cli.header_print(f"Sleeping for {hr} hours", 2, color=CLIPrint.TEAL)
+            cli.header_print(f"Sleeping for {hr} hours", 1, color=ANSI.Cyan)
             sleep_time = sc or (mn * 60 if mn else 3600)
         elif hr > 0:
-            cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 2, color=CLIPrint.TEAL)
+            cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 1, color=ANSI.Cyan)
             sleep_time = sc or 60
         elif mn > 1:
-            cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 2, color=CLIPrint.BLUE)
+            cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 1, color=ANSI.Blue)
             sleep_time = sc or 60
         else:
-            cli.header_print(f"Sleep {sc + (mn * 60):02} s", 2, color="\033[5m" + CLIPrint.BLUE)
+            # cli.header_print("Sleeping", 1, color=(ANSI.Blue + ANSI.Blink))
+            cli.header_print(f"Sleep {sc + (mn * 60):02} s", 1, color=(ANSI.Blue + ANSI.Blink))
             sleep_time = 1
         time.sleep(min(sleep_time, remaining))
-    cli.header_print("", 2, color=CLIPrint.DEFAULT)
+    cli.header_print("", 1, color=ANSI.Default)
 
 
 def run_ytdlp():
@@ -279,9 +288,13 @@ def run_ytdlp():
                 while logger.if_error():
                     extractor, id, error_msg = logger.read_error()
                     if id == channel:
-                        cli.status_line(f"({extractor}) {channel} \033[91m{error_msg}\033[0m")
+                        cli.status_line(f"({extractor}) {channel} {ANSI.BrRed}{error_msg}{ANSI.Default}")
+                    elif extractor is None:
+                        cli.status_line(f"{channel} > {ANSI.BrRed}{error_msg}{ANSI.Default}")
                     else:
-                        cli.status_line(f"({extractor}) {channel} | \033[37m{id}\033[0m -> \033[91m{error_msg}\033[0m")
+                        cli.status_line(
+                            f"({extractor}) {channel} | {ANSI.Gray}{id}{ANSI.Default} -> {ANSI.BrRed}{error_msg}{ANSI.Default}"
+                        )
                     sleep_header(5)
                     errors += 1
                 sleep_header(errors * 600)
@@ -301,8 +314,7 @@ def run_ytdlp():
 def main():
     main_loop = True
     cli.cls()
-    cli.cursor_off()
-    cli.header_print(f"YT_DLP YTB {LOCAL_VERSION}", 1, color=CLIPrint.GREEN)
+    cli.header_print(f"YT_DLP YTB {LOCAL_VERSION}", 0, color=ANSI.Green)
     shutil.rmtree(TEMP_DIRECTORY, ignore_errors=True)
     os.makedirs(TEMP_DIRECTORY, exist_ok=True)
     while main_loop:
@@ -314,8 +326,6 @@ def main():
         except KeyboardInterrupt:
             main_loop = False
             cli.status_line("KeyboardInterrupt in main")
-    cli.cursor_on()
-    cli.pass_cursor()
 
 
 if __name__ == "__main__":
