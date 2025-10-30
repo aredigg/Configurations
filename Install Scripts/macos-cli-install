@@ -307,7 +307,7 @@ setup() {
     INSTALL_ROOT_CERTS="$INSTALL_CERTS_DIRECTORY/cert.pem"
     export PATH="${PATH:-}:${INSTALL_PREFIX}/bin"
     export SCRIPT_PYTHONPATH=$(dirname $(which python3))
-    export MACOSX_DEPLOYMENT_TARGET=15.00
+    export MACOSX_DEPLOYMENT_TARGET=26.00
     print -- "Pos $positional_args"
     print -- "Unk $unknown_args"
     CONCURRENT_JOBS=$(("$(getconf _NPROCESSORS_ONLN)" + "$(echo "$(getconf _NPROCESSORS_ONLN) / 2" | bc)"))
@@ -530,6 +530,32 @@ EOF
          fi
          git apply "${diff_filename}_2"
 }
+
+patch_ffmpeg_metal() {
+    local package=$1
+    local diff_filename=$2
+        if [[ ! -f "${diff_filename}_metal" ]]; then
+            tee "${diff_filename}_metal" > /dev/null << EOF
+diff --git a/ffbuild/common.mak b/ffbuild/common.mak
+--- a/ffbuild/common.mak
++++ b/ffbuild/common.mak
+@@ -12,6 +12,11 @@
+
+ ifndef SUBDIR
+
++# Force Metal tools through xcrun to use the active Xcode toolchain.
++# Unconditional on all platforms as requested.
++override METALCC  := xcrun -sdk macosx metal
++override METALLIB := xcrun -sdk macosx metallib
++
+ LINK = \$(LD) \$(1)
+
+ ifeq (\$(LD),\$(CC))
+EOF
+          fi
+          git apply "${diff_filename}_metal"
+ }
+
 
 patch_ffmpeg_x() {
     local package=$1
@@ -976,7 +1002,7 @@ install_configure() {
             fi
         fi
         print_status $package "INFO" "Building"
-        make -j$CONCURRENT_JOBS
+        make -j$CONCURRENT_JOBS V=1
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
         sudo_check
@@ -1019,7 +1045,7 @@ install_make_only() {
             ./fetchDependencies --$tool_options
         fi
         print_status $package "INFO" "Building"
-        make -j$CONCURRENT_JOBS $tool_options
+        make V=1 -j$CONCURRENT_JOBS $tool_options
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
         if target_exists "install"; then
@@ -1309,7 +1335,15 @@ install_package() {
     fi
 
     if (( $(( $(date +%s) - last_completion )) > $skip_time )); then
-        find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
+        if [[ $package == "cpython" ]]; then
+            {
+                find "$INSTALL_PREFIX" -type f 2>/dev/null
+                find "/Library/Frameworks/Python.framework" -type f 2>/dev/null
+                find "/Applications/Python"* -type f 2>/dev/null
+            } | sort -u > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
+        else
+            find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
+        fi
         download "$package" "$6" "$7" "$8" "$9" "$10" "$11"
         pre_patch "$package" "$source_directory"
         sudo_check
@@ -1354,7 +1388,15 @@ install_package() {
         esac
         if [[ $INSTALL_COMMAND != "remove" ]]; then
             print_status $package "INFO" "Manifesting"
-            find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/$package.post-manifest"
+            if [[ $package == "cpython" ]]; then
+                {
+                    find "$INSTALL_PREFIX" -type f 2>/dev/null
+                    find "/Library/Frameworks/Python.framework" -type f 2>/dev/null
+                    find "/Applications/Python"* -type f 2>/dev/null
+                } | sort -u > "$MANIFEST_DIRECTORY/$package.post-manifest"
+            else
+                find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/$package.post-manifest"
+            fi
             comm -13 "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest" >> "$MANIFEST_DIRECTORY/$package.manifest"
             rm "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest"
             if [[ $CREATE_XZ == ON ]]; then
@@ -1525,6 +1567,7 @@ pre_patch() {
                 print_status $package "INFO" "Patching"
                 cd "$source_directory"
                 patch_ffmpeg "$package" "$source_directory/local_install.patch"
+                # patch_ffmpeg_metal "$package" "$source_directory/local_install.patch"
                 ;;
             x265)
                 print_status $package "INFO" "Patching"
@@ -1617,6 +1660,10 @@ main() {
         export LDXXFLAGS="-Wl,-rpath,@loader_path/../lib"
         export JAVA_HOME=$(java -XshowSettings:properties -version 2>&1 > /dev/null | grep 'java.home' | awk '{print $3}')
         export RUSTFLAGS="-C opt-level=3 -C debuginfo=0 -C rpath=true"
+
+        # ensure we have metal
+        xcodebuild -downloadComponent MetalToolchain
+        sudo xcodebuild -downloadComponent MetalToolchain
 
         # m4 (builtin old) -
         install_package "m4" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/m4/" "m4-latest.tar.xz" "YES" "YES"
@@ -1798,7 +1845,7 @@ main() {
         add_rpath "$INSTALL_PREFIX/bin/hx" "@loader_path/../lib"
 
         # jdtls (versioned) - java, python
-        install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.50.0/" "jdt-language-server-1.50.0-202509041425.tar.gz" "YES" "NO"
+        install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.51.0/" "jdt-language-server-1.51.0-202510022025.tar.gz" "YES" "NO"
 
         # vhdl_ls
         install_package "vhdl_ls" "cargo" "/vhdl_ls" "" "" "git" "https://github.com/VHDL-LS/rust_hdl.git" "master" "YES" "YES"
@@ -2132,7 +2179,7 @@ main() {
         install_package "pocketsphinx" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/cmusphinx/pocketsphinx.git" "main" "YES" "YES"
 
         # libgpg-error (versioned)
-        install_package "libgpg-error" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgpg-error/" "libgpg-error-1.55.tar.bz2" "YES" "YES"
+        install_package "libgpg-error" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgpg-error/" "libgpg-error-1.56.tar.bz2" "YES" "YES"
 
         # libgcrypt (versioned)
         install_package "libgcrypt" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgcrypt/" "libgcrypt-1.11.2.tar.bz2" "YES" "YES"
@@ -2353,14 +2400,17 @@ main() {
         # install_package "openai-whisper" "pip" "binary"
 
         # postgresql (versioned)
-        install_package "postgresql" "meson" "" "" "" "git" "https://git.postgresql.org/git/postgresql.git" "REL_17_STABLE" "YES" "YES"
-        # install_package "postgresql" "meson" "" "" "" "git" "https://github.com/postgres/postgres.git" "REL_17_STABLE" "YES" "YES"
+        # install_package "postgresql" "meson" "" "" "" "git" "https://git.postgresql.org/git/postgresql.git" "REL_17_STABLE" "YES" "YES"
+        install_package "postgresql" "meson" "" "" "" "git" "https://github.com/postgres/postgres.git" "REL_17_STABLE" "YES" "YES"
 
         # qt5 (versioned) too new cmake must fix
         # install_package "qt5" "cmake" "" "" "" "git" "git://code.qt.io/qt/qt5.git" "dev" "YES" "YES"
 
         # exiftool (versioned)
         install_package "exiftool" "prebuilt" "" "" "" "https" "https://downloads.sourceforge.net/exiftool/" "Image-ExifTool-13.39.tar.gz" "YES" "YES"
+
+        # dovi_tool
+        install_package "mdcat" "cargo" "" "" "" "git" "https://github.com/quietvoid/dovi_tool.git" "main" "YES" "YES"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
