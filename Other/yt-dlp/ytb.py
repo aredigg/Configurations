@@ -15,7 +15,7 @@ from logger import Logger
 if TYPE_CHECKING:
     from yt_dlp import _Params
 
-LOCAL_VERSION = "2.13"
+LOCAL_VERSION = "2.14"
 DEBUG = False
 CLI_LOGGER = None
 
@@ -46,7 +46,7 @@ YDL_OPTS = {
         "temp": f"{TEMP_DIRECTORY}",
         "home": f"{OUTPUT_DIRECTORY}",
     },
-    "cookiesfrombrowser": ("safari", None, None, None),
+    #    "cookiesfrombrowser": ("safari", None, None, None),
     "download_archive": f"{ARCHIVED_FILE}",
     "outtmpl": "%(channel)s/%(timestamp>%Y-%m)s/%(id)s.%(ext)s",
     "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=1600]+bestaudio/best",
@@ -56,7 +56,8 @@ YDL_OPTS = {
     "writedescription": False,
     "writeinfojson": False,
     "hls_prefer_native": True,
-    "extractor_args": {"youtube": {"player_client": ["default", "-tv", "web_safari", "web_embedded"]}},
+    #    "extractor_args": {"youtube": {"player_client": ["vr", "default", "-tv", "web_safari", "web_embedded"]}},
+    "extractor_args": {"youtube": {"player_client": ["android_vr", "default"]}},
     "external_downloader_args": {"ffmpeg": ["-loglevel", "quiet", "-hide_banner", "-nostats"]},
     "downloader_args": {
         "ffmpeg": ["-loglevel", "quiet", "-hide_banner", "-nostats"],
@@ -193,31 +194,37 @@ def process_channel(ydl, channel, depth=0, index=0):
     info = ydl.extract_info(channel, download=False, process=False)
     if info:
         info_type = info.get("_type") or ""
+        title = info.get("title") or info.get("channel") or info.get("uploader")
+        if title is None:
+            title = f"{info.get('extractor')} ({info.get('id')})"
         if info_type == "playlist":
-            cli.tree_print(f"{info.get('channel')}", index=depth)
-            cli.tree_print(f"{info.get('title')}", index=depth)
+            cli.tree_print(f"{title}", index=depth)
             if entries := list(info.get("entries")):
-                cli.tree_print(f"{info.get('title')} ({len(entries)})", index=depth)
+                cli.tree_print(f"{title} ({len(entries)})", index=depth)
                 for i, entry in enumerate(entries, start=1):
                     if entry and (entry_url := (entry.get("webpage_url") or entry.get("url"))):
                         process_channel(ydl, entry_url, depth + 1, i)
         elif info_type == "url":
-            cli.tree_print(f"URL TODO: {info.get('title')}", index=depth)
+            cli.tree_print(f"URL TODO: {title}", index=depth)
         else:
             video_url = channel
+            cli.tree_print(f"{info.get('uploader') or info.get('channel') or info.get('extractor')}", index=depth)
+            depth += 1
             cli.tree_print(
                 f"|{index:>4}| \033[1m{info.get('title')}\033[0m ({info.get('live_status')})", index=depth, line=0
             )
             formats = info.get("formats") or []
             upload_date = util.format_upload_date(info.get("upload_date") or "")
+            if upload_date:
+                upload_date = datetime.datetime.strptime(upload_date, "%Y-%m-%d").date()
+            else:
+                upload_date = datetime.datetime.fromtimestamp(int(info.get("timestamp"))).date()
             dur = util.time_formatted(*util.convert_seconds(int(info.get("duration") or 0)))
             cli.tree_print(
-                f"{dur} {util.get_best_format(formats)} ({info.get('id')}) {upload_date}",
+                f"{dur} {util.get_best_format(formats)} ({info.get('id')}) {upload_date.strftime('%Y-%m-%d')}",
                 index=depth,
                 line=1,
             )
-            util.save_list_to_file(f"{info.get('id')}_formats", util.list_all_formats(formats), TEMP_DIRECTORY)
-            upload_date = datetime.datetime.strptime(upload_date, "%Y-%m-%d").date()
             if not ACCEPT_VERTICAL and util.enumerate_is_vertical(formats):
                 cli.tree_print("Vertical", index=depth + 1, line=1)
                 util.add_video_id(f"{ARCHIVED_FILE}", f"{info.get('extractor')} {info.get('id')}")
@@ -242,8 +249,6 @@ def process_channel(ydl, channel, depth=0, index=0):
 
 
 def sleep_header(duration):
-    # eta = util.time_formatted_short(*util.convert_to_time(duration))
-    # cli.status_line(f"Sleeping until {eta}")
     end_time = time.time() + duration
     while (remaining := end_time - time.time()) > 0:
         hr, mn, sc = util.convert_seconds(int(remaining))
@@ -260,7 +265,6 @@ def sleep_header(duration):
             cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 1, color=ANSI.Blue)
             sleep_time = sc or 60
         else:
-            # cli.header_print("Sleeping", 1, color=(ANSI.Blue + ANSI.Blink))
             cli.header_print(f"Sleep {sc + (mn * 60):02} s", 1, color=(ANSI.Blue + ANSI.Blink))
             sleep_time = 1
         time.sleep(min(sleep_time, remaining))
@@ -298,9 +302,7 @@ def run_ytdlp():
                     elif extractor is None:
                         cli.status_line(f"{channel} > {ANSI.BrRed}{error_msg}{ANSI.Default}")
                     else:
-                        cli.status_line(
-                            f"({extractor}) {channel} | {ANSI.Gray}{id}{ANSI.Default} -> {ANSI.BrRed}{error_msg}{ANSI.Default}"
-                        )
+                        cli.status_line(f"({extractor}) {channel} | {id} -> {ANSI.BrRed}{error_msg}{ANSI.Default}")
                     sleep_header(5)
                     errors += 1
                 sleep_header(errors * 600)

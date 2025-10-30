@@ -1,6 +1,7 @@
 import datetime
 import re
 import time
+import unicodedata
 from shutil import get_terminal_size as size
 
 from logger import Logger
@@ -136,12 +137,36 @@ class ANSI:
         return f"\033[38;5;{232 + val}m"
 
     @staticmethod
+    def ulen(text: str):
+        length = 0
+        for c in text:
+            cp = ord(c)
+            if unicodedata.category(c) in ("Mn", "Me", "Cf") and cp not in (0x200D,):
+                pass
+            elif cp in (0x200B, 0x200C, 0x200D, 0xFEFF):
+                pass
+            elif (
+                0x1F300 <= cp <= 0x1F9FF
+                or 0x2600 <= cp <= 0x26FF
+                or 0x2700 <= cp <= 0x27BF
+                or 0x1F000 <= cp <= 0x1F02F
+                or 0x1F0A0 <= cp <= 0x1F0FF
+                or 0x1FA00 <= cp <= 0x1FAFF
+            ):
+                length += 2
+            elif unicodedata.east_asian_width(c) in ("F", "W"):
+                length += 2
+            else:
+                length += 1
+        return length
+
+    @staticmethod
     def len(text: str) -> int:
         if len(text) < 1:
             return 0
         code = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
         clean = code.sub("", text)
-        return len(clean)
+        return ANSI.ulen(clean)
 
 
 class BxDraw:
@@ -290,7 +315,7 @@ class CLIPrint:
         for line in self._lines:
             if line is not None:
                 while ANSI.len(line) > self._w:
-                    line = line[: (self._w - ANSI.len(line))]
+                    line = line[:-1]
                 print(line + ANSI.ClearEOL)
             else:
                 print(ANSI.ClearEOL)
@@ -301,7 +326,7 @@ class CLIPrint:
         self._last_update = time.time()
 
     def _print_status(self) -> None:
-        diff = len(self._status) - ANSI.len(self._status)
+        diff = ANSI.ulen(self._status) - ANSI.len(self._status)
         ln = (
             ANSI.pos(1, self._h - 2)
             + ANSI.gray(pct=75, bg=True)
@@ -315,7 +340,7 @@ class CLIPrint:
         print(ln)
 
     def _print_debug(self) -> None:
-        diff = len(self._debug_line) - ANSI.len(self._debug_line)
+        diff = ANSI.ulen(self._debug_line) - ANSI.len(self._debug_line)
         ln = (
             ANSI.pos(1, self._h - 3)
             + ANSI.gray(pct=25, bg=True)
@@ -343,11 +368,13 @@ class CLIPrint:
 
     def _hline(self, text: str, centered: bool = False) -> str:
         ln = BxDraw.Squared.V
-        diff = len(text) - ANSI.len(text)
+        while ANSI.ulen(text) > self._w - 4:
+            text = text[:1]
+        diff = self._w - 2 - ANSI.len(text)
         if centered:
-            ln += f" {text:^{self._w - 4}.{self._w - 4}} " + " " * diff
+            ln += " " * (diff >> 1) + text + " " * (diff >> 1)
         else:
-            ln += f" {text:<{self._w - 4}.{self._w - 4}} " + " " * diff
+            ln += " " + text + " " * (diff - 1)
         ln += BxDraw.Squared.V
         return ln
 
@@ -417,7 +444,7 @@ class CLIPrint:
     def _ssline(self, content: list[str]) -> str:
         ln = BxDraw.Squared.ML + BxDraw.Squared.H
         for h in CLIPrint.slot_header:
-            h_len = len(h)
+            h_len = ANSI.ulen(h)
             if h != CLIPrint.slot_header[4]:
                 ln += BxDraw.Squared.H * h_len + BxDraw.Squared.H + BxDraw.Squared.MC
             else:
@@ -426,14 +453,14 @@ class CLIPrint:
         ln += BxDraw.Squared.MR + "\n"
         ln2 = BxDraw.Squared.V + " "
         for h, hc in zip(CLIPrint.slot_header, content):
-            h_len = len(h)
+            h_len = ANSI.ulen(h)
             if h == CLIPrint.slot_header[2]:
                 ln2 += f"{hc} " + BxDraw.Squared.V
             elif h != CLIPrint.slot_header[4]:
-                diff = len(hc) - ANSI.len(hc)
+                diff = ANSI.ulen(hc) - ANSI.len(hc)
                 ln2 += f"{hc:{h_len}.{h_len}} " + " " * diff + BxDraw.Squared.V
             else:
-                diff = len(hc) - ANSI.len(hc)
+                diff = ANSI.ulen(hc) - ANSI.len(hc)
                 length = self._w - ANSI.len(ln2) - 2
                 ln2 += f" {hc:{length}.{length}}" + " " * diff + BxDraw.Squared.V
         return ln + ln2
