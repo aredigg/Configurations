@@ -1129,6 +1129,7 @@ install_prebuilt() {
             sudo mkdir -p "$INSTALL_PREFIX/bin"
             sudo ln -fs "$INSTALL_PREFIX/share/java/jdtls/bin/jdtls" "$INSTALL_PREFIX/bin/jdtls"
         elif [[ $package == "exiftool" ]]; then
+            uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
             local PERL_CONFIG_DIR="/Library/Perl/$(perl -e 'printf "%vd", $^V' | cut -d. -f1-2)"
             sudo cp -rPf "$source_directory/exiftool" "$INSTALL_PREFIX/bin"
@@ -1145,8 +1146,17 @@ install_prebuilt() {
                     install_count=1
                 fi
             done
+            if [[ $package == "zig" ]]; then
+                sudo cp -Pf "$source_directory/zig" "$INSTALL_PREFIX/bin/"
+                install_count=1
+            fi
             if (( install_count == 0 )); then
-                print_status $package "WARN" "Not supported"
+                count_files=( "$source_directory"/*(.N) )
+                if (( ${#count_files} == 1 )); then
+                    sudo cp -Pf "$count_files[1]" "$INSTALL_PREFIX/bin/"
+                else
+                    print_status $package "WARN" "Not supported"
+                fi
             fi
         fi
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -1833,6 +1843,9 @@ main() {
         # rust (beta)
         install_package "rust-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-beta-aarch64-apple-darwin.tar.xz" "YES" "YES"
 
+        # rust-src (beta)
+        install_package "rust-src-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-src-beta.tar.xz" "YES" "YES"
+
         # tree-sitter-cli - rust
         install_package "tree-sitter-cli" "cargo" "" "" "/crates/cli" "git" "https://github.com/tree-sitter/tree-sitter.git" "master" "YES" "YES"
 
@@ -2353,6 +2366,12 @@ main() {
 
         # snort_extra - cmake
         install_package "snort_extra" "cmake" "" "" "" "git" "https://github.com/snort3/snort3_extra.git" "master" "YES" "YES"
+
+        # zig (versioned)
+        install_package "zig" "prebuilt" "" "" "" "https" "https://ziglang.org/builds/" "zig-aarch64-macos-0.16.0-dev.1225+bf9082518.tar.xz" "YES" "YES"
+
+        # deno (versioned)
+        install_package "deno" "prebuilt" "" "" "" "https" "https://github.com/denoland/deno/releases/download/v2.5.6/" "deno-aarch64-apple-darwin.zip" "YES" "NO"
 
         # ruff - python
         install_package "ruff" "pip"
