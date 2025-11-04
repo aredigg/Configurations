@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from yt_dlp import _Params
 
 LOCAL_VERSION = "2.14"
-DEBUG = False
+DEBUG = True
 CLI_LOGGER = None
 
 ACCEPT_VERTICAL = False
@@ -46,7 +46,7 @@ YDL_OPTS = {
         "temp": f"{TEMP_DIRECTORY}",
         "home": f"{OUTPUT_DIRECTORY}",
     },
-    #    "cookiesfrombrowser": ("safari", None, None, None),
+    "cookiesfrombrowser": ("safari", None, None, None),
     "download_archive": f"{ARCHIVED_FILE}",
     "outtmpl": "%(channel)s/%(timestamp>%Y-%m)s/%(id)s.%(ext)s",
     "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=1600]+bestaudio/best",
@@ -56,8 +56,8 @@ YDL_OPTS = {
     "writedescription": False,
     "writeinfojson": False,
     "hls_prefer_native": True,
-    #    "extractor_args": {"youtube": {"player_client": ["vr", "default", "-tv", "web_safari", "web_embedded"]}},
-    "extractor_args": {"youtube": {"player_client": ["android_vr", "default"]}},
+    "extractor_args": {"youtube": {"player_client": ["default", "-tv", "web_safari", "web_embedded"]}},
+    # "extractor_args": {"youtube": {"player_client": ["android_vr"]}},  # cannot work together with cookies
     "external_downloader_args": {"ffmpeg": ["-loglevel", "quiet", "-hide_banner", "-nostats"]},
     "downloader_args": {
         "ffmpeg": ["-loglevel", "quiet", "-hide_banner", "-nostats"],
@@ -185,8 +185,8 @@ def process_download(url_list, availability, depth=0):
         else:
             cli.status_line(f"({extractor}) {id} {ANSI.BrRed}{error_msg}{ANSI.Default}")
         errors += 1
-        sleep_header(5)
-    sleep_header(errors * 60)
+        sleep_header(1)
+    # sleep_header(errors * 60)
 
 
 def process_channel(ydl, channel, depth=0, index=0):
@@ -246,6 +246,8 @@ def process_channel(ydl, channel, depth=0, index=0):
                 output, duration = util.sleep_calc(min(int(info.get("duration") or 0) >> 1, random.randint(0, 1800)))
                 if output:
                     sleep_header(duration)
+    else:
+        cli.status_line(f"{channel} {ANSI.Yellow}Skipped{ANSI.Default}")
 
 
 def sleep_header(duration):

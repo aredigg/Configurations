@@ -20,6 +20,7 @@ from logger import Logger
 LOCAL_VERSION = "2.17"
 OUTPUT_DIRECTORY = "/Volumes/Delt/Prosjekter/yt-dlp/.cbtv2"
 TEMP_DIRECTORY = "/Volumes/Ekstern/.cbttemp"
+CLI_LOGGER = None
 
 MINIMUM_RESOLUTION = 1000
 
@@ -56,9 +57,9 @@ MIN_DURATION = 300
 MAX_SLOTS = 4
 MAX_HEADERS = 3
 DEBUG = False
-OFFLINE_WINDOW = 20
+OFFLINE_WINDOW = 60
 
-cli = CLIPrint(MAX_SLOTS, MAX_HEADERS, TEMP_DIRECTORY + "/log", DEBUG)
+cli = CLIPrint(MAX_SLOTS, MAX_HEADERS, CLI_LOGGER, DEBUG)
 cli_queue = multiprocessing.Queue()
 
 if TYPE_CHECKING:

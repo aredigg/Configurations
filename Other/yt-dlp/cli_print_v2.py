@@ -6,7 +6,9 @@ from shutil import get_terminal_size as size
 
 from logger import Logger
 
-LOCAL_VERSION = "2.05"
+LOCAL_VERSION = "2.06"
+
+DEBUG_LINES = 10
 
 
 class ANSI:
@@ -168,6 +170,38 @@ class ANSI:
         clean = code.sub("", text)
         return ANSI.ulen(clean)
 
+    @staticmethod
+    def clean(text: str) -> str:
+        if len(text) < 1:
+            return ""
+        code = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+        return code.sub("", text)
+
+    @staticmethod
+    def uclean(text: str) -> str:
+        text = ANSI.clean(text)
+        clean_text = ""
+        for c in text:
+            cp = ord(c)
+            if unicodedata.category(c) in ("Mn", "Me", "Cf") and cp not in (0x200D,):
+                pass
+            elif cp in (0x200B, 0x200C, 0x200D, 0xFEFF):
+                pass
+            elif (
+                0x1F300 <= cp <= 0x1F9FF
+                or 0x2600 <= cp <= 0x26FF
+                or 0x2700 <= cp <= 0x27BF
+                or 0x1F000 <= cp <= 0x1F02F
+                or 0x1F0A0 <= cp <= 0x1F0FF
+                or 0x1FA00 <= cp <= 0x1FAFF
+            ):
+                clean_text += "_"
+            elif unicodedata.east_asian_width(c) in ("F", "W"):
+                clean_text += "_"
+            else:
+                clean_text += c
+        return clean_text
+
 
 class BxDraw:
     class Round:
@@ -236,6 +270,8 @@ class CLIPrint:
         self._mlines: list[list[str]] = []
         self._status: str = "CLI Print Ready"
         self._debug_line: str = "Debug" if debug else ""
+        self._debug_lines: list[str] = ["Debug" if debug else ""]
+        self._debug_dt: str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._debug_timeout: float = time.time()
         self._top_header: str = ""
         self._last_update: float = time.time()
@@ -254,9 +290,26 @@ class CLIPrint:
         self._print_status()
         self._update()
 
+    def _add_debug_line(self, ln, ln_len):
+        diff = ln_len - len(ln)
+        spacer = " " * diff
+        ln = "  " + ln + spacer
+        if ln != self._debug_lines[-1]:
+            self._debug_lines.append(ln)
+
     def debug_line(self, text: str) -> None:
-        dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self._debug_line = f"{ANSI.Yellow} ► {dt}   {ANSI.BrYellow} {text:{self._w - 25}.{self._w - 25}}"
+        self._debug_dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        text = ANSI.uclean(text)
+        ln_len = self._w - 4
+        parts = text.strip().split("\n")
+        for part in parts:
+            while len(part) > ln_len:
+                curr = part[:ln_len].strip()
+                self._add_debug_line(curr, ln_len)
+                part = part[ln_len:].strip()
+            self._add_debug_line(part, ln_len)
+        while len(self._debug_lines) > DEBUG_LINES:
+            self._debug_lines.pop(0)
         self._print_debug()
         self._debug_timeout: float = time.time()
         self._update()
@@ -321,7 +374,7 @@ class CLIPrint:
                 print(ANSI.ClearEOL)
         print(ANSI.ClearBelow)
         self._print_status()
-        if self._debug_line:
+        if len(self._debug_lines) > 1:
             self._print_debug()
         self._last_update = time.time()
 
@@ -340,18 +393,16 @@ class CLIPrint:
         print(ln)
 
     def _print_debug(self) -> None:
-        diff = ANSI.ulen(self._debug_line) - ANSI.len(self._debug_line)
-        ln = (
-            ANSI.pos(1, self._h - 3)
+        print(
+            ANSI.pos(1, self._h - 3 - DEBUG_LINES)
             + ANSI.gray(pct=25, bg=True)
-            + ANSI.BrYellow
-            + f" {self._debug_line} "
-            + " " * diff
+            + ANSI.Yellow
+            + f" ► {self._debug_dt} {ANSI.BrYellow}- Debug - "
             + ANSI.ClearEOL
         )
-        while ANSI.len(ln) > self._w:
-            ln = ln[: (self._w - ANSI.len(ln))]
-        print(ln)
+        for pos, ln in enumerate(self._debug_lines, start=self._h - 2 - DEBUG_LINES):
+            ln = f"{ANSI.pos(1, pos)}{ANSI.gray(pct=25, bg=True)}{ANSI.BrYellow} {ln} {ANSI.ClearEOL}"
+            print(ln)
 
     def _hrline(self, top: bool) -> str:
         if top:
