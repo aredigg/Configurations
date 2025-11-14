@@ -113,8 +113,9 @@ def get_best_resolution(formats):
     if format := enumerate_best_format(formats):
         width = format.get("width") or 0
         height = format.get("height") or 0
-        return f"{width:>4}x{height:<4}"
-    return "[Unknown]"
+        bitrate = format.get("tbr") or format.get("vbr") or 0
+        return f"{width:>4}x{height:<4}", str(bitrate).split(".")[0]
+    return "[Unknown]", ""
 
 
 def enumerate_is_vertical(formats):

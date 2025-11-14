@@ -1,5 +1,8 @@
 import os
 import time
+from importlib.metadata import version
+
+import yt_dlp.version as YDLV  # noqa  # noqa
 
 import ytb
 
@@ -12,7 +15,11 @@ ytb.CHANNELS_FILE = ytb.CONFIG_DIRECTORY + "/low_resolution_channels"
 def main():
     main_loop = True
     ytb.cli.cls()
-    ytb.cli.header_print(f"YT_DLP YTB {ytb.LOCAL_VERSION}, LOW {LOCAL_VERSION}", 0, color="\033[92m")
+    ytb.cli.header_print(
+        f"{YDLV.ORIGIN.split('/')[0].upper()} {version('yt_dlp')} {YDLV.CHANNEL}/{YDLV.VARIANT} YTB {ytb.LOCAL_VERSION}, LOW {LOCAL_VERSION}",
+        0,
+        color="\033[92m",
+    )
     os.makedirs(ytb.TEMP_DIRECTORY, exist_ok=True)
     while main_loop:
         try:

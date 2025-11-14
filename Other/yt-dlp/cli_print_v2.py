@@ -6,7 +6,7 @@ from shutil import get_terminal_size as size
 
 from logger import Logger
 
-LOCAL_VERSION = "2.06"
+LOCAL_VERSION = "2.07"
 
 DEBUG_LINES = 10
 
@@ -266,7 +266,7 @@ class CLIPrint:
         self._debug: bool = debug
         self._lines: list[str | None] = []
         self._hlines: list[str | None] = [""] * self._headers
-        self._slines: list[tuple[str, str, str, str] | None] = [("", "", "", "")] * self._slots
+        self._slines: list[tuple[str, str, str, str, str, str] | None] = [("", " ", "", "", "", "")] * self._slots
         self._mlines: list[list[str]] = []
         self._status: str = "CLI Print Ready"
         self._debug_line: str = "Debug" if debug else ""
@@ -314,11 +314,11 @@ class CLIPrint:
         self._debug_timeout: float = time.time()
         self._update()
 
-    def slot_print(self, content: tuple[str, str, str], index: int):
+    def slot_print(self, content: tuple[str, str, str, str, str], index: int):
         dt = datetime.datetime.now().strftime("%H:%M")
         if index < len(self._slines):
-            status, resolution, channel = content
-            self._slines[index] = dt, status, resolution, channel
+            status, resolution, bitrate, previous, channel = content
+            self._slines[index] = dt, status, resolution, bitrate, previous, channel
         self._update()
 
     def tree_print(self, text: str, index: int = 0, line: int = 0):
@@ -458,13 +458,13 @@ class CLIPrint:
                         buffer.append(self._hline(""))
             buffer.append(self._hsline(top=False))
 
-    slot_header = [" Slot ", " Time ", " Status", " Resolution", "Channel"]
+    slot_header = [" Slot ", " Time ", " Status", " Resolution", " Bitrate", "  Previous ", "Channel"]
 
     def _sshline(self) -> str:
         ln = BxDraw.Squared.LT + BxDraw.Squared.H
         for h in CLIPrint.slot_header:
             h_len = ANSI.len(h)
-            if h != CLIPrint.slot_header[4]:
+            if h != CLIPrint.slot_header[6]:
                 ln += BxDraw.Squared.H * h_len + BxDraw.Squared.H + BxDraw.Squared.MT
             else:
                 length = self._w - len(ln) - 2
@@ -473,7 +473,7 @@ class CLIPrint:
         ln2 = BxDraw.Squared.V + " "
         for h in CLIPrint.slot_header:
             h_len = ANSI.len(h)
-            if h != CLIPrint.slot_header[4]:
+            if h != CLIPrint.slot_header[6]:
                 ln2 += f"{h:{h_len}.{h_len}} " + BxDraw.Squared.V
             else:
                 length = self._w - len(ln2) - 2
@@ -484,7 +484,7 @@ class CLIPrint:
         ln = BxDraw.Squared.LB + BxDraw.Squared.H
         for h in CLIPrint.slot_header:
             h_len = ANSI.len(h)
-            if h != CLIPrint.slot_header[4]:
+            if h != CLIPrint.slot_header[6]:
                 ln += BxDraw.Squared.H * h_len + BxDraw.Squared.H + BxDraw.Squared.MB
             else:
                 length = self._w - len(ln) - 2
@@ -496,7 +496,7 @@ class CLIPrint:
         ln = BxDraw.Squared.ML + BxDraw.Squared.H
         for h in CLIPrint.slot_header:
             h_len = ANSI.ulen(h)
-            if h != CLIPrint.slot_header[4]:
+            if h != CLIPrint.slot_header[6]:
                 ln += BxDraw.Squared.H * h_len + BxDraw.Squared.H + BxDraw.Squared.MC
             else:
                 length = self._w - len(ln) - 2
@@ -507,7 +507,7 @@ class CLIPrint:
             h_len = ANSI.ulen(h)
             if h == CLIPrint.slot_header[2]:
                 ln2 += f"{hc} " + BxDraw.Squared.V
-            elif h != CLIPrint.slot_header[4]:
+            elif h != CLIPrint.slot_header[6]:
                 diff = ANSI.ulen(hc) - ANSI.len(hc)
                 ln2 += f"{hc:{h_len}.{h_len}} " + " " * diff + BxDraw.Squared.V
             else:
@@ -522,12 +522,14 @@ class CLIPrint:
                 buffer.append(line)
             for i, slot in enumerate(self._slines, start=1):
                 if slot:
-                    time, status, res, channel = slot
+                    time, status, res, bitrate, previous, channel = slot
                     slot_content = [
-                        f" {str(i):>5.5} ",
+                        f" {str(i):>3.3}   ",
                         f" {time} ",
                         f"   {status}   ",
                         f" {res:<9.9}",
+                        f"{bitrate:>7}",
+                        f" {previous:10}",
                         f"{channel}",
                     ]
                     for line in self._ssline(slot_content).split("\n"):

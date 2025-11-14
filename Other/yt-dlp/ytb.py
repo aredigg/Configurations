@@ -4,8 +4,10 @@ import random
 import shutil
 import time
 from collections import deque
+from importlib.metadata import version
 from typing import TYPE_CHECKING, cast
 
+import yt_dlp.version as YDLV  # noqa
 from yt_dlp import YoutubeDL
 
 import util
@@ -15,8 +17,8 @@ from logger import Logger
 if TYPE_CHECKING:
     from yt_dlp import _Params
 
-LOCAL_VERSION = "2.14"
-DEBUG = True
+LOCAL_VERSION = "2.15"
+DEBUG = False
 CLI_LOGGER = None
 
 ACCEPT_VERTICAL = False
@@ -307,7 +309,7 @@ def run_ytdlp():
                         cli.status_line(f"({extractor}) {channel} | {id} -> {ANSI.BrRed}{error_msg}{ANSI.Default}")
                     sleep_header(5)
                     errors += 1
-                sleep_header(errors * 600)
+                sleep_header(errors)
             sleep_header(3600)
     except SystemExit as e:
         cli.status_line(f"SystemExit {str(e)}")
@@ -324,7 +326,11 @@ def run_ytdlp():
 def main():
     main_loop = True
     cli.cls()
-    cli.header_print(f"YT_DLP YTB {LOCAL_VERSION}", 0, color=ANSI.Green)
+    cli.header_print(
+        f"{YDLV.ORIGIN.split('/')[0].upper()} {version('yt_dlp')} {YDLV.CHANNEL}/{YDLV.VARIANT} YTB {LOCAL_VERSION}",
+        0,
+        color=ANSI.Green,
+    )
     shutil.rmtree(TEMP_DIRECTORY, ignore_errors=True)
     os.makedirs(TEMP_DIRECTORY, exist_ok=True)
     while main_loop:
