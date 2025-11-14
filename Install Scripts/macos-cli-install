@@ -1243,6 +1243,28 @@ install_cargo() {
     fi
 }
 
+install_zig() {
+    local package="$1"
+    local source_path="$2"
+    local tool_options="$3"
+    local source_directory="$4"
+    local build_directory="$5"
+    if [[ $INSTALL_COMMAND == "install" ]]; then
+        print_status $package "INFO" "Configuring"
+        mkdir -p "$build_directory"
+        cd "$build_directory"
+        print_status $package "INFO" "Building"
+        zig build -Doptimize=ReleaseFast --build-file "$source_directory/build.zig" --cache-dir "$build_directory/zig-cache"
+        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+        print_status $package "INFO" "Installing"
+        sudo_check
+        sudo zig build -Doptimize=ReleaseFast  --build-file "$source_directory/build.zig"  --cache-dir "$build_directory/zig-cache" install -p "$INSTALL_PREFIX"
+    elif [[ $INSTALL_COMMAND == "remove" ]]; then
+        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+    fi
+
+}
+
 install_custom_x265() {
     local package="$1"
     local source_directory="$2"
@@ -1379,6 +1401,9 @@ install_package() {
                 ;;
             cargo)
                 install_cargo "$package" "$3" "$4" "$source_directory" "$build_directory"
+                ;;
+            zig)
+                install_zig "$package" "$3" "$4" "$source_directory" "$build_directory"
                 ;;
             swift)
                 ;;
@@ -2369,6 +2394,9 @@ main() {
 
         # zig (versioned)
         install_package "zig" "prebuilt" "" "" "" "https" "https://ziglang.org/builds/" "zig-aarch64-macos-0.16.0-dev.1225+bf9082518.tar.xz" "YES" "YES"
+
+        # zls (versioned to zig) - zig
+        install_package "zls" "zig" "" "" "" "git" "https://github.com/zigtools/zls.git" "master" "YES" "YES" "techatrix/iogate"
 
         # deno (versioned)
         install_package "deno" "prebuilt" "" "" "" "https" "https://github.com/denoland/deno/releases/download/v2.5.6/" "deno-aarch64-apple-darwin.zip" "YES" "NO"
