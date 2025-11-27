@@ -3,6 +3,7 @@ import os
 import random
 import shutil
 import time
+import traceback
 from collections import deque
 from importlib.metadata import version
 from typing import TYPE_CHECKING, cast
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     from yt_dlp import _Params
 
 LOCAL_VERSION = "2.15"
-DEBUG = False
+DEBUG = True
 CLI_LOGGER = None
 
 ACCEPT_VERTICAL = False
@@ -38,6 +39,7 @@ MEDIAN_LENGTH = 1000
 
 YDL_OPTS = {
     "ignoreerrors": True,
+    "verbose": True,
     "live_from_start": True,
     "multistreams": True,
     "retries": 5,
@@ -48,7 +50,7 @@ YDL_OPTS = {
         "temp": f"{TEMP_DIRECTORY}",
         "home": f"{OUTPUT_DIRECTORY}",
     },
-    "cookiesfrombrowser": ("safari", None, None, None),
+    # "cookiesfrombrowser": ("safari", None, None, None),
     "download_archive": f"{ARCHIVED_FILE}",
     "outtmpl": "%(channel)s/%(timestamp>%Y-%m)s/%(id)s.%(ext)s",
     "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=1600]+bestaudio/best",
@@ -58,8 +60,13 @@ YDL_OPTS = {
     "writedescription": False,
     "writeinfojson": False,
     "hls_prefer_native": True,
-    "extractor_args": {"youtube": {"player_client": ["default", "-tv", "web_safari", "web_embedded"]}},
-    # "extractor_args": {"youtube": {"player_client": ["android_vr"]}},  # cannot work together with cookies
+    # "extractor_args": {"youtube": {"player_client": ["default", "-tv", "web_safari", "web_embedded"]}},
+    "extractor_args": {
+        # "youtube": {"player_client": ["android_vr", "mweb"]},
+        #        "youtubepot-bgutilscript": {
+        #            "script_path": "/Users/aredigranes/.bgutil/bgutil-ytdlp-pot-provider/server/build/generate_once.js"
+        #        },
+    },  # cannot work together with cookies
     "external_downloader_args": {"ffmpeg": ["-loglevel", "quiet", "-hide_banner", "-nostats"]},
     "downloader_args": {
         "ffmpeg": ["-loglevel", "quiet", "-hide_banner", "-nostats"],
@@ -220,7 +227,7 @@ def process_channel(ydl, channel, depth=0, index=0):
             if upload_date:
                 upload_date = datetime.datetime.strptime(upload_date, "%Y-%m-%d").date()
             else:
-                upload_date = datetime.datetime.fromtimestamp(int(info.get("timestamp"))).date()
+                upload_date = datetime.datetime.fromtimestamp(int(info.get("timestamp") or 0)).date()
             dur = util.time_formatted(*util.convert_seconds(int(info.get("duration") or 0)))
             cli.tree_print(
                 f"{dur} {util.get_best_format(formats)} ({info.get('id')}) {upload_date.strftime('%Y-%m-%d')}",
@@ -319,6 +326,7 @@ def run_ytdlp():
         ret_status = -1
     except BaseException as e:
         cli.status_line(f"BaseException {str(e)}")
+        cli.debug_line(traceback.format_exc())
         ret_status = -1
     return ret_status
 

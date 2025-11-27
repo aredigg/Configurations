@@ -6,9 +6,9 @@ from shutil import get_terminal_size as size
 
 from logger import Logger
 
-LOCAL_VERSION = "2.07"
+LOCAL_VERSION = "2.09"
 
-DEBUG_LINES = 10
+DEBUG_LINES = size().lines >> 1
 
 
 class ANSI:
@@ -285,6 +285,9 @@ class CLIPrint:
         self._update()
 
     def status_line(self, text: str) -> None:
+        if len(text.split("\n")) > 1:
+            self.debug_line(text)
+            text = text.split("\n")[0]
         dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._status = f"{ANSI.Blue} ► {dt}   {ANSI.gray(pct=0, bg=False)} {text:{self._w - 25}.{self._w - 25}}"
         self._print_status()
@@ -315,7 +318,7 @@ class CLIPrint:
         self._update()
 
     def slot_print(self, content: tuple[str, str, str, str, str], index: int):
-        dt = datetime.datetime.now().strftime("%H:%M")
+        dt = datetime.datetime.now().strftime("%a %H:%M")
         if index < len(self._slines):
             status, resolution, bitrate, previous, channel = content
             self._slines[index] = dt, status, resolution, bitrate, previous, channel
@@ -431,8 +434,10 @@ class CLIPrint:
 
     def _redraw_headers(self, buffer: list[str | None]) -> None:
         buffer.append(self._hrline(top=True))
-        if self._hlines and self._hlines[0]:
+        if self._hlines and self._hlines[0] is not None:
             buffer.append(self._hline(self._hlines[0], True))
+        else:
+            self.status_line("Header is empty")
         if self._headers > 1:
             for text in self._hlines[1:]:
                 buffer.append(self._hmline())
@@ -458,7 +463,7 @@ class CLIPrint:
                         buffer.append(self._hline(""))
             buffer.append(self._hsline(top=False))
 
-    slot_header = [" Slot ", " Time ", " Status", " Resolution", " Bitrate", "  Previous ", "Channel"]
+    slot_header = [" Slot ", "   Time   ", " Status", " Resolution", " Bitrate", "  Previous ", "Channel"]
 
     def _sshline(self) -> str:
         ln = BxDraw.Squared.LT + BxDraw.Squared.H
@@ -523,6 +528,8 @@ class CLIPrint:
             for i, slot in enumerate(self._slines, start=1):
                 if slot:
                     time, status, res, bitrate, previous, channel = slot
+                    if not any(slot[2:]):
+                        time = " " * 9
                     slot_content = [
                         f" {str(i):>3.3}   ",
                         f" {time} ",

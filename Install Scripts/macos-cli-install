@@ -2459,6 +2459,9 @@ main() {
         # dovi_tool
         install_package "mdcat" "cargo" "" "" "" "git" "https://github.com/quietvoid/dovi_tool.git" "main" "YES" "YES"
 
+        # mcp - python
+        install_package "mcp" "pip"
+
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
             install_package "pip" "pip"

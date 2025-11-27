@@ -13,7 +13,7 @@ ytb.OUTPUT_DIRECTORY = "/Volumes/Delt/Prosjekter/yt-dlp/.cbtv2"
 ytb.TEMP_DIRECTORY = "/Volumes/Ekstern/.cbttemp"
 ytb.CONFIG_DIRECTORY = ytb.OUTPUT_DIRECTORY
 
-ytb.DEBUG = False
+ytb.DEBUG = True
 ytb.ACCEPT_VERTICAL = True
 ytb.CHANNELS_FILE = ytb.OUTPUT_DIRECTORY + "/other_channels"
 ytb.ARCHIVED_FILE = ytb.OUTPUT_DIRECTORY + "/other_archived"

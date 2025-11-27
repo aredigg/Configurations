@@ -19,7 +19,7 @@ import util
 from cli_print_v2 import ANSI, CLIPrint
 from logger import Logger
 
-LOCAL_VERSION = "2.20"
+LOCAL_VERSION = "2.22"
 OUTPUT_DIRECTORY = "/Volumes/Delt/Prosjekter/yt-dlp/.cbtv2"
 TEMP_DIRECTORY = "/Volumes/Ekstern/.cbttemp"
 CLI_LOGGER = None
@@ -56,10 +56,11 @@ YDL_OPTS = {
     "postprocessor_args": {"ffmpeg": ["-loglevel", "error", "-hide_banner", "-nostats"]},
 }
 MIN_DURATION = 1800
-MAX_SLOTS = 3
+MAX_SLOTS = 8
 MAX_HEADERS = 3
 DEBUG = False
 OFFLINE_WINDOW = 120
+CHANNELS_FILE_HEADER = "# Channel;Last Download;Last Attempt;Last Error;Error Message;Resolution;Bitrate\n"
 
 cli = CLIPrint(MAX_SLOTS, MAX_HEADERS, CLI_LOGGER, DEBUG)
 cli_queue = multiprocessing.Queue()
@@ -125,16 +126,17 @@ def run_ytdlp():
     channels_prefix = ""
     try:
         # channel files format
-        # channel;last download date;last attempt date;last error date;last error message
+        # channel;last download date;last attempt date;last error date;last error message;resolution;bitrate
         with open(f"{CHANNELS_FILE}", "r") as f:
             channels = {
                 p[0]: list(p[1:]) for ln in f if (s := ln.strip()) and not s.startswith("#") if (p := s.split(";"))
             }
         # removes duplicates from file
         for channel in channels:
-            while len(channels[channel]) < 4:
+            while len(channels[channel]) < 6:
                 channels[channel].append("")
         with open(f"{CHANNELS_FILE}", "w") as f:
+            f.write(CHANNELS_FILE_HEADER)
             for channel in channels:
                 f.write(f"{channel};{';'.join(channels[channel])}\n")
         with open(f"{CHANNELS_PREFIX}", "r") as f:
@@ -171,7 +173,7 @@ def run_ytdlp():
                         while all(slot for slot in slots):
                             _wait_for_slot(slots)
                         for counter, channel in enumerate(channels, start=1):
-                            color = ANSI.Default + ANSI.ResetBold + ""
+                            color = ANSI.Default + ANSI.ResetBold + ANSI.Underline + ""
                             if counter < 25:
                                 color = ANSI.color("D4AF37") + ANSI.Bold
                             elif counter < 50:
@@ -183,7 +185,7 @@ def run_ytdlp():
                             elif counter < 300:
                                 color = ANSI.color("89CFF0") + ANSI.Bold
                             cli.header_print(f"{previous_date} {color}{counter:>3}\033[0m/{len(channels)}", 1)
-                            if channel in finished_channels:
+                            if channel in finished_channels or channels[channel][0] == str(previous_date):
                                 cli.status_line(f"{ANSI.Bold}{channel}{ANSI.ResetBold} skipped")
                                 continue
                             if channel in offline_channels:
@@ -220,7 +222,7 @@ def run_ytdlp():
                                         else:
                                             cli.slot_print(
                                                 (
-                                                    ANSI.BrRed + ANSI.Blink + "●" + ANSI.ResetBlink + ANSI.Reset,
+                                                    ANSI.BrMagenta + ANSI.Blink + "●" + ANSI.ResetBlink + ANSI.Reset,
                                                     res,
                                                     bitrate,
                                                     channels[channel][0],
@@ -231,20 +233,28 @@ def run_ytdlp():
                                         p, q = download_manager(channels_prefix, channel, slot_index, postprocess_lock)
                                         slots[slot_index] = {"process": p, "queue": q, "channel": channel}
                                         finished_channels.append(channel)
-                                        channels[channel][0] = str(previous_date)
+                                        channels[channel][0] = str(datetime.datetime.now(datetime.timezone.utc).date())
+                                        channels[channel][4] = res
+                                        channels[channel][5] = bitrate
                                     elif util.enumerate_is_low_resolution(formats, MINIMUM_RESOLUTION):
                                         finished_channels.append(channel)
                                         cli.status_line(
                                             f"{ANSI.Bold}{channel}{ANSI.ResetBold} Resolution < {MINIMUM_RESOLUTION}"
                                         )
                                         channels[channel][2] = str(previous_date)
-                                        channels[channel][3] = f"Resolution < {MINIMUM_RESOLUTION}"
+                                        channels[channel][3] = f"Resolution < {MINIMUM_RESOLUTION}!"
+                                        res, bitrate = util.get_best_resolution(formats)
+                                        channels[channel][4] = res
+                                        channels[channel][5] = bitrate
                                     else:
                                         cli.status_line(
                                             f"{ANSI.Bold}{channel}{ANSI.ResetBold} Resolution < {minimum_resolution}"
                                         )
                                         channels[channel][2] = str(previous_date)
                                         channels[channel][3] = f"Resolution < {minimum_resolution}"
+                                        res, bitrate = util.get_best_resolution(formats)
+                                        channels[channel][4] = res
+                                        channels[channel][5] = bitrate
                             else:
                                 offline_channels[channel] = time.time() + OFFLINE_WINDOW * 60
                                 channels[channel][1] = str(previous_date)
@@ -256,7 +266,7 @@ def run_ytdlp():
                                     cli.status_line(f"{ANSI.Bold}{channel}{ANSI.ResetBold} | {id} {error_msg}")
                                 if id in channels:
                                     channels[id][2] = str(previous_date)
-                                    channels[id][3] = error_msg
+                                    channels[id][3] = error_msg[:50]
                             if DEBUG:
                                 dmsg = []
                                 while logger.count() > 0:
@@ -275,6 +285,7 @@ def run_ytdlp():
                     cli.header_print(f"{previous_date} {len(channels)}", 1)
                     with open(f"{CHANNELS_FILE}", "w") as f:
                         cli.status_line(f"Updating channels file {len(channels)}|{previous_date}")
+                        f.write(CHANNELS_FILE_HEADER)
                         for channel in channels:
                             f.write(f"{channel};{';'.join(channels[channel])}\n")
     except SystemExit as e:
@@ -381,7 +392,7 @@ def _poll_workers(slots):
                         else:
                             cli.slot_print(
                                 (
-                                    ANSI.Default + "○" + ANSI.Reset,
+                                    ANSI.BrRed + "●" + ANSI.Reset,
                                     "",
                                     "",
                                     "",
@@ -524,22 +535,38 @@ def common_hook(hook, data, slot_index=None, cli_queue=None):
                     try:
                         os.remove(filename)
                     except Exception:
-                        cli.status_line(f"Error during remove: {filename}")
+                        if cli_queue is not None:
+                            cli_queue.put(("status_line", (f"Error during remove: {filename}",), {}))
                 else:
-                    cli.status_line(f"Error with file: {filename}")
-                cli.status_line(f"{title} rejected: {elapsed} s < {MIN_DURATION} s")
+                    if cli_queue is not None:
+                        cli_queue.put(("status_line", (f"Error with file: {filename}",), {}))
+                if cli_queue is not None:
+                    cli_queue.put(("status_line", (f"{title} rejected: {elapsed} s < {MIN_DURATION} s",), {}))
                 if slot_index:
-                    cli.slot_print(
-                        (ANSI.Default + "○" + ANSI.Reset, resolution, str(tbr).split(".")[0], "", f"{id} rejected"),
-                        slot_index,
+                    slot_output = (
+                        ANSI.BrRed + "●" + ANSI.Reset,
+                        resolution,
+                        str(tbr).split(".")[0],
+                        "",
+                        f"{id} rejected",
                     )
-                raise RejectedVideoReached(f"Duration {elapsed} s too short")
+                if slot_index is not None and cli_queue is not None:
+                    cli_queue.put(("slot_print", (slot_output, slot_index), {}))
+                elif cli_queue is not None:
+                    cli_queue.put(("status_line", (output,), {}))
+                elif slot_index is not None:
+                    cli.slot_print(slot_output, slot_index)
+                else:
+                    cli.status_line(output)
+                if elapsed > 120:
+                    raise RejectedVideoReached(f"Duration too short, {elapsed / 60} min")
+                raise RejectedVideoReached(f"Duration too short, {elapsed} s")
         tf = util.time_formatted(*util.convert_seconds(elapsed))
         output = (
             f"{resolution:9} {ANSI.Bold}{id:20}{ANSI.ResetBold} | {status} download, {int(total_bytes >> 20)} MB {tf}"
         )
         slot_output = (
-            ANSI.Default + "●" + ANSI.Reset,
+            ANSI.Red + "●" + ANSI.Reset,
             resolution,
             str(tbr).split(".")[0],
             "",
@@ -549,7 +576,7 @@ def common_hook(hook, data, slot_index=None, cli_queue=None):
         post_status = data.get("postprocessor") or ""
         output = f"{resolution:9} {id:20} | {processes[post_status]} {status}"
         slot_output = (
-            ANSI.Default + "●" + ANSI.Reset,
+            ANSI.BrYellow + "●" + ANSI.Reset,
             resolution,
             str(tbr).split(".")[0],
             "",
