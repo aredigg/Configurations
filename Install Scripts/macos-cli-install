@@ -809,6 +809,81 @@ EOF
 fi
 }
 
+# Manual PKG
+# ==============================================================================
+install_pkg_glesv1_cm() {
+sudo_check
+if [[ $INSTALL_COMMAND == "remove" ]]; then
+    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/glesv1_cm.pc" ]]; then
+        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/glesv1_cm.pc"
+    fi
+elif [[ $INSTALL_COMMAND == "install" ]]; then
+    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/glesv1_cm.pc" ]]; then
+        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/glesv1_cm.pc" > /dev/null << EOF
+prefix=/usr/local
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: GLESv1_CM
+Description: ANGLE OpenGL ES 1.1 CM
+Version: 1.1
+Libs: -L\${libdir} -lGLESv1_CM
+Cflags: -I\${includedir}
+EOF
+    fi
+fi
+}
+
+install_pkg_glesv2() {
+sudo_check
+if [[ $INSTALL_COMMAND == "remove" ]]; then
+    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/glesv2.pc" ]]; then
+        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/glesv2.pc"
+    fi
+elif [[ $INSTALL_COMMAND == "install" ]]; then
+    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/glesv2.pc" ]]; then
+        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/glesv2.pc" > /dev/null << EOF
+prefix=/usr/local
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: GLESv2
+Description: ANGLE OpenGL ES 2.0
+Version: 3.0
+Libs: -L\${libdir} -lGLESv2
+Cflags: -I\${includedir}
+EOF
+    fi
+fi
+}
+
+install_pkg_egl() {
+sudo_check
+if [[ $INSTALL_COMMAND == "remove" ]]; then
+    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/egl.pc" ]]; then
+        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/egl.pc"
+    fi
+elif [[ $INSTALL_COMMAND == "install" ]]; then
+    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/egl.pc" ]]; then
+        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/egl.pc" > /dev/null << EOF
+prefix=/usr/local
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: EGL
+Description: ANGLE EGL
+Version: 1.5
+Libs: -L\${libdir} -lEGL
+Cflags: -I\${includedir}
+EOF
+    fi
+fi
+}
+
+
 # Download functions
 # ==============================================================================
 
@@ -1002,7 +1077,7 @@ install_configure() {
             fi
         fi
         print_status $package "INFO" "Building"
-        make -j$CONCURRENT_JOBS V=1
+        make -j$CONCURRENT_JOBS
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
         sudo_check
@@ -1045,7 +1120,7 @@ install_make_only() {
             ./fetchDependencies --$tool_options
         fi
         print_status $package "INFO" "Building"
-        make V=1 -j$CONCURRENT_JOBS $tool_options
+        make -j$CONCURRENT_JOBS $tool_options
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
         if target_exists "install"; then
@@ -1168,7 +1243,15 @@ install_pip() {
     local package="$1"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         sudo_check
-        if [[ $2 == "binary" ]]; then
+        if [[ $package == "pip" ]]; then
+            curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+            sudo python3 get-pip.py --force-reinstall
+            rm get-pip.py
+        fi
+        if [[ $package == "cocotb" ]]; then
+            echo $1 $2 $3 $4 $5
+            sudo COCOTB_IGNORE_PYTHON_REQUIRES=1 $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --no-binary :all: --upgrade "$package"
+        elif [[ $2 == "binary" ]]; then
             print_status $package "INFO" "Installing"
             sudo $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"
         elif [[ $2 == "version" ]]; then
@@ -1633,6 +1716,9 @@ pre_patch() {
                 cd "$source_directory"
                 patch_mdcat "$package" "$source_directory/local_install.patch"
                 ;;
+            libepoxy)
+                print_status $package "INFO" "Patching"
+                sed -i '' '/requires_private/d' "${2}/src/meson.build"
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
@@ -1697,8 +1783,10 @@ main() {
         export RUSTFLAGS="-C opt-level=3 -C debuginfo=0 -C rpath=true"
 
         # ensure we have metal
-        xcodebuild -downloadComponent MetalToolchain
-        sudo xcodebuild -downloadComponent MetalToolchain
+        if [[ $INSTALL_COMMAND == "install" ]]; then
+            xcodebuild -downloadComponent MetalToolchain
+            sudo xcodebuild -downloadComponent MetalToolchain
+        fi
 
         # m4 (builtin old) -
         install_package "m4" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/m4/" "m4-latest.tar.xz" "YES" "YES"
@@ -1753,7 +1841,7 @@ main() {
         install_package "libtommath" "cmake" "" "" "" "git" "https://github.com/libtom/libtommath.git" "develop" "YES" "YES"
 
         # pcre2 - python (builtin), zlib (builtin), pcre2
-        install_package "pcre2" "cmake" "" "" "" "git" "https://github.com/PCRE2Project/pcre2.git" "master" "YES" "YES"
+        install_package "pcre2" "cmake" "" "" "" "git" "https://github.com/PCRE2Project/pcre2.git" "main" "YES" "YES"
 
         # swig - python (builtin), zlib (builtin), pcre2, bison
         install_package "swig" "cmake" "" "-DPCRE2_INCLUDE_DIRS=\"$INSTALL_PREFIX/include\"" "" "git" "https://github.com/swig/swig.git" "master" "YES" "YES"
@@ -1882,8 +1970,11 @@ main() {
         install_package "helix" "cargo" "/helix-term" "" "" "git" "https://github.com/helix-editor/helix.git" "master" "YES" "YES"
         add_rpath "$INSTALL_PREFIX/bin/hx" "@loader_path/../lib"
 
+        # starship - rust
+        install_package "starship" "cargo" "" "" "" "git" "https://github.com/starship/starship.git" "master" "YES" "YES"
+
         # jdtls (versioned) - java, python
-        install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.51.0/" "jdt-language-server-1.51.0-202510022025.tar.gz" "YES" "NO"
+        install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.54.0/" "jdt-language-server-1.54.0-202511261751.tar.gz" "YES" "NO"
 
         # vhdl_ls
         install_package "vhdl_ls" "cargo" "/vhdl_ls" "" "" "git" "https://github.com/VHDL-LS/rust_hdl.git" "master" "YES" "YES"
@@ -2026,46 +2117,17 @@ main() {
         # gfortran (versioned) https://mac.r-project.org/tools/gfortran-14.2-universal.pkg
         # install_package "gfortran" "prebuilt" "" "" "/local" "https" "https://mac.r-project.org/tools/" "gfortran-14.2-darwin20-r2-universal.tar.xz" "YES" "YES"
 
-        # gtk
-        install_package "gtk" "meson" "" "-Dx11-backend=false -Dmacos-backend=true -Dvulkan=disabled -Dmedia-gstreamer=disabled -Dbuild-examples=false -Dbuild-tests=false -Dintrospection=enabled" "" "git" "https://gitlab.gnome.org/GNOME/gtk.git" "main" "YES" "YES"
-
-        # gtk3+
-        install_package "gtk3" "meson" "" "-Dx11_backend=false -Dquartz_backend=true -Dintrospection=true" "" "https" "https://download.gnome.org/sources/gtk+/3.24/" "gtk+-3.24.43.tar.xz" "YES" "YES"
-
         # numpy - python
         install_package "numpy" "pip"
+
+        # scipy - python
+        install_package "scipy" "pip"
 
         # pytest - python
         install_package "pytest" "pip"
 
         # sympy - python
         install_package "sympy" "pip"
-
-        # gtk-doc
-        install_package "gtk-doc" "meson" "" "-Dtests=false -Dyelp_manual=false" "" "git" "https://gitlab.gnome.org/GNOME/gtk-doc.git" "master" "YES" "YES"
-
-        # gtk-mac-integration
-        install_package "gtk-mac-integration" "configure_in_source" "./autogen.sh" "--without-gtk2 --with-gtk3 --enable-introspection=yes" "" "git" "https://gitlab.gnome.org/GNOME/gtk-mac-integration.git" "master" "YES" "YES"
-
-        # desktop-file-utils
-        install_package "desktop-file-utils" "meson" "" "" "" "git" "https://gitlab.freedesktop.org/xdg/desktop-file-utils.git" "master" "YES" "YES"
-
-        # hicolor-icon-theme
-        install_package "hicolor-icon-theme" "meson" "" "" "" "https" "https://icon-theme.freedesktop.org/releases/" "hicolor-icon-theme-0.18.tar.xz" "YES" "YES"
-
-        # shared-mime-info
-        export CFLAGS="-Wno-implicit-function-declaration -Wno-pointer-integer-compare"
-        install_package "shared-mime-info" "meson" "" "" "" "https" "https://gitlab.freedesktop.org/xdg/shared-mime-info/-/archive/2.4/" "shared-mime-info-2.4.tar.bz2" "YES" "YES"
-        export CFLAGS=""
-
-        # gtkwave
-        install_package "gtkwave" "meson" "" "" "" "git" "https://github.com/gtkwave/gtkwave.git" "master" "YES" "YES"
-
-        # molten-vk
-        install_package "molten-vk" "make_only" "" "macos" "" "git" "https://github.com/KhronosGroup/MoltenVK.git" "main" "YES" "YES"
-
-        # fastfetch
-        install_package "fastfetch" "cmake" "" "" "" "git" "https://github.com/fastfetch-cli/fastfetch.git" "dev" "YES" "YES"
 
         # nettle (versioned)
         install_package "nettle" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/nettle/" "nettle-3.10.2.tar.gz" "YES" "YES"
@@ -2083,7 +2145,7 @@ main() {
         install_package "c-ares" "cmake" "" "" "" "git" "https://github.com/c-ares/c-ares.git" "main" "YES" "YES"
 
         # gnutls (versioned)
-        install_package "gnutls" "configure" "" "--with-included-libtasn1 --with-included-unistring" "" "https" "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/" "gnutls-3.8.10.tar.xz" "YES" "YES"
+        install_package "gnutls" "configure" "" "--with-included-libtasn1 --with-included-unistring" "" "https" "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/" "gnutls-3.8.11.tar.xz" "YES" "YES"
 
         # libass
         install_package "libass" "meson" "" "" "" "git" "https://github.com/libass/libass.git" "master" "YES" "YES"
@@ -2092,7 +2154,7 @@ main() {
         install_package "libbluray" "meson" "" "-Dbdj_jar=disabled -Dfontconfig=enabled -Dfreetype=enabled -Dlibxml2=enabled" "" "https" "https://download.videolan.org/videolan/libbluray/1.4.0/" "libbluray-1.4.0.tar.xz" "YES" "YES"
 
         # mpg123 (versioned)
-        install_package "mpg123" "configure" "" "" "" "https" "https://sourceforge.net/projects/mpg123/files/mpg123/1.33.2/" "mpg123-1.33.2.tar.bz2" "YES" "YES"
+        install_package "mpg123" "configure" "" "" "" "https" "https://sourceforge.net/projects/mpg123/files/mpg123/1.33.3/" "mpg123-1.33.3.tar.bz2" "YES" "YES"
 
         # lame (versioned)
         install_package "lame" "configure" "" "--disable-debug --enable-nasm" "" "https" "https://sourceforge.net/projects/lame/files/lame/3.100/" "lame-3.100.tar.gz" "YES" "YES"
@@ -2194,6 +2256,83 @@ main() {
         # libvpx
         install_package "libvpx" "configure" "" "" "" "git" "https://chromium.googlesource.com/webm/libvpx.git" "main" "YES" "YES"
 
+        # tomli - python
+        install_package "tomli" "pip"
+
+        # mako - python
+        install_package "mako" "pip"
+
+        # pyyaml - python
+        install_package "pyyaml" "pip"
+
+        # mesa
+        install_package "mesa" "meson" "" "-Dllvm=disabled -Dshared-llvm=disabled -Dcpp_rtti=false -Dplatforms=macos -Dgallium-drivers=softpipe -Dglx=disabled" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
+
+        # depot_tools
+        install_package "depot_tools" "custom" "" "" "" "git" "https://chromium.googlesource.com/chromium/tools/depot_tools.git" "main" "YES" "YES"
+        export PATH="$PATH:${SOURCES_DIRECTORY}/depot_tools"
+
+        # angle
+        # xcodebuild -downloadComponent MetalToolchain
+        install_package "angle" "custom" "" "" "" "none" "" "" "YES" "YES"
+        install_pkg_glesv1_cm
+        install_pkg_glesv2
+        install_pkg_egl
+
+        # libepoxy
+        # install_package "libepoxy" "meson" "" "-Dx11=false -Dtests=false" "" "git" "https://github.com/akihikodaki/libepoxy.git" "macos" "YES" "YES"
+        # install_package "libepoxy" "meson" "" "-Dx11=false -Dtests=false" "" "git" "https://github.com/akihikodaki/libepoxy.git" "macos" "YES" "YES"
+        install_package "libepoxy" "meson" "" "-Degl=yes -Dx11=false" "" "git" "https://github.com/mohd-akram/libepoxy.git" "macos-egl" "YES" "YES"
+        # install_package "libepoxy" "meson" "" "-Dx11=false -Dtests=false" "" "https" "https://download.gnome.org/sources/libepoxy/1.5/" "libepoxy-1.5.10.tar.xz" "YES" "YES"
+
+        # virglrenderer
+        install_package "virglrenderer" "meson" "" "" "" "git" "https://github.com/akihikodaki/virglrenderer.git" "macos" "YES" "YES"
+
+        # vdev2
+        install_package "vdev2" "cmake" "" "" "" "git" "https://github.com/virtualsquare/vde-2.git" "master" "YES" "YES"
+
+        # libssh
+        install_package "libssh" "cmake" "" "-DBUILD_STATIC_LIB=ON -DWITH_SYMBOL_VERSIONING=OFF" "" "git" "https://git.libssh.org/projects/libssh.git" "master" "YES" "YES"
+
+        # capstone
+        install_package "capstone" "cmake" "" "" "" "git" "https://github.com/capstone-engine/capstone.git" "next" "YES" "YES"
+
+        # distlib
+        install_package "distlib" "pip"
+
+        # gtk
+        install_package "gtk" "meson" "" "-Dx11-backend=false -Dmacos-backend=true -Dvulkan=disabled -Dmedia-gstreamer=disabled -Dbuild-examples=false -Dbuild-tests=false -Dintrospection=enabled" "" "git" "https://gitlab.gnome.org/GNOME/gtk.git" "main" "YES" "YES"
+
+        # gtk3+
+        install_package "gtk3" "meson" "" "-Dx11_backend=false -Dquartz_backend=true -Dintrospection=true" "" "https" "https://download.gnome.org/sources/gtk+/3.24/" "gtk+-3.24.43.tar.xz" "YES" "YES"
+
+        # gtk-doc
+        install_package "gtk-doc" "meson" "" "-Dtests=false -Dyelp_manual=false" "" "git" "https://gitlab.gnome.org/GNOME/gtk-doc.git" "master" "YES" "YES"
+
+        # gtk-mac-integration
+        install_package "gtk-mac-integration" "configure_in_source" "./autogen.sh" "--without-gtk2 --with-gtk3 --enable-introspection=yes" "" "git" "https://gitlab.gnome.org/GNOME/gtk-mac-integration.git" "master" "YES" "YES"
+
+        # desktop-file-utils
+        install_package "desktop-file-utils" "meson" "" "" "" "git" "https://gitlab.freedesktop.org/xdg/desktop-file-utils.git" "master" "YES" "YES"
+
+        # hicolor-icon-theme (versioned)
+        install_package "hicolor-icon-theme" "meson" "" "" "" "https" "https://ftp2.osuosl.org/pub/blfs/conglomeration/hicolor-icon-theme/" "hicolor-icon-theme-0.18.tar.xz" "YES" "YES"
+        # install_package "hicolor-icon-theme" "meson" "" "" "" "https" "https://icon-theme.freedesktop.org/releases/" "hicolor-icon-theme-0.18.tar.xz" "YES" "YES"
+
+        # shared-mime-info (versioned)
+        export CFLAGS="-Wno-implicit-function-declaration -Wno-pointer-integer-compare"
+        install_package "shared-mime-info" "meson" "" "" "" "https" "https://gitlab.freedesktop.org/xdg/shared-mime-info/-/archive/2.4/" "shared-mime-info-2.4.tar.bz2" "YES" "YES"
+        export CFLAGS=""
+
+        # gtkwave
+        install_package "gtkwave" "meson" "" "" "" "git" "https://github.com/gtkwave/gtkwave.git" "master" "YES" "YES"
+
+        # molten-vk
+        install_package "molten-vk" "make_only" "" "macos" "" "git" "https://github.com/KhronosGroup/MoltenVK.git" "main" "YES" "YES"
+
+        # fastfetch
+        install_package "fastfetch" "cmake" "" "" "" "git" "https://github.com/fastfetch-cli/fastfetch.git" "dev" "YES" "YES"
+
         # xavs2
         CFLAGS="-Wno-incompatible-pointer-types"
         install_package "xavs2" "configure_in_source" "" "--host=aarch64-apple-darwin24" "/build/linux" "git" "https://github.com/pkuvcl/xavs2.git" "master" "YES" "YES"
@@ -2246,44 +2385,6 @@ main() {
         export LDFLAGS="-logg -lvorbis -lsharpyuv -lwebp -Wl,-rpath,@loader_path/../lib"
         install_package "ffmpeg" "configure" "" "--enable-gpl --enable-version3 --enable-nonfree --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libcdio --enable-libdav1d --enable-libfdk-aac --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libgme --enable-libharfbuzz --enable-libjxl --enable-libmp3lame --enable-libopencore-amrwb --enable-opengl --enable-libopus  --enable-libopenjpeg --enable-libopenmpt --enable-libsvtav1 --enable-libtheora --enable-libxvid  --enable-libsnappy --enable-libmysofa --enable-libopencore-amrnb --enable-libmodplug --enable-libqrencode --enable-libshine --enable-librubberband --enable-libsoxr --enable-libsnappy --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvo-amrwbenc --enable-libvpx --enable-libwebp --enable-libx264 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzvbi --enable-gcrypt --enable-gmp --enable-gnutls --enable-openal --enable-opencl --enable-pocketsphinx  --enable-libopenh264 --enable-libvmaf --enable-libxavs2 --enable-libzmq" "" "git" "https://git.ffmpeg.org/ffmpeg.git" "master" "YES" "YES"
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
-
-        # tomli - python
-        install_package "tomli" "pip"
-
-        # mako - python
-        install_package "mako" "pip"
-
-        # pyyaml - python
-        install_package "pyyaml" "pip"
-
-        # mesa
-        install_package "mesa" "meson" "" "-Dllvm=disabled -Dshared-llvm=disabled -Dcpp_rtti=false -Dplatforms=macos -Dgallium-drivers=softpipe -Dglx=disabled" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
-
-        # depot_tools
-        install_package "depot_tools" "custom" "" "" "" "git" "https://chromium.googlesource.com/chromium/tools/depot_tools.git" "main" "YES" "YES"
-        export PATH="$PATH:${SOURCES_DIRECTORY}/depot_tools"
-
-        # angle
-        # xcodebuild -downloadComponent MetalToolchain
-        install_package "angle" "custom" "" "" "" "none" "" "" "YES" "YES"
-
-        # libepoxy
-        install_package "libepoxy" "meson" "" "-Degl=yes -Dx11=false" "" "git" "https://github.com/akihikodaki/libepoxy.git" "macos" "YES" "YES"
-
-        # virglrenderer
-        install_package "virglrenderer" "meson" "" "" "" "git" "https://github.com/akihikodaki/virglrenderer.git" "macos" "YES" "YES"
-
-        # vdev2
-        install_package "vdev2" "cmake" "" "" "" "git" "https://github.com/virtualsquare/vde-2.git" "master" "YES" "YES"
-
-        # libssh
-        install_package "libssh" "cmake" "" "-DBUILD_STATIC_LIB=ON -DWITH_SYMBOL_VERSIONING=OFF" "" "git" "https://git.libssh.org/projects/libssh.git" "master" "YES" "YES"
-
-        # capstone
-        install_package "capstone" "cmake" "" "" "" "git" "https://github.com/capstone-engine/capstone.git" "next" "YES" "YES"
-
-        # distlib
-        install_package "distlib" "pip"
 
         # qemu
         install_package "qemu" "configure" "" \
@@ -2393,10 +2494,10 @@ main() {
         install_package "snort_extra" "cmake" "" "" "" "git" "https://github.com/snort3/snort3_extra.git" "master" "YES" "YES"
 
         # zig (versioned)
-        install_package "zig" "prebuilt" "" "" "" "https" "https://ziglang.org/builds/" "zig-aarch64-macos-0.16.0-dev.1225+bf9082518.tar.xz" "YES" "YES"
+        install_package "zig" "prebuilt" "" "" "" "https" "https://ziglang.org/builds/" "zig-aarch64-macos-0.16.0-dev.1484+d0ba6642b.tar.xz" "YES" "YES"
 
         # zls (versioned to zig) - zig
-        install_package "zls" "zig" "" "" "" "git" "https://github.com/zigtools/zls.git" "master" "YES" "YES" "techatrix/iogate"
+        install_package "zls" "zig" "" "" "" "git" "https://github.com/zigtools/zls.git" "master" "YES" "YES"
 
         # deno (versioned)
         install_package "deno" "prebuilt" "" "" "" "https" "https://github.com/denoland/deno/releases/download/v2.5.6/" "deno-aarch64-apple-darwin.zip" "YES" "NO"
@@ -2454,13 +2555,28 @@ main() {
         # install_package "qt5" "cmake" "" "" "" "git" "git://code.qt.io/qt/qt5.git" "dev" "YES" "YES"
 
         # exiftool (versioned)
-        install_package "exiftool" "prebuilt" "" "" "" "https" "https://downloads.sourceforge.net/exiftool/" "Image-ExifTool-13.39.tar.gz" "YES" "YES"
+        install_package "exiftool" "prebuilt" "" "" "" "https" "https://downloads.sourceforge.net/exiftool/" "Image-ExifTool-13.43.tar.gz" "YES" "YES"
 
         # dovi_tool
         install_package "mdcat" "cargo" "" "" "" "git" "https://github.com/quietvoid/dovi_tool.git" "main" "YES" "YES"
 
         # mcp - python
         install_package "mcp" "pip"
+
+        # fastmcp (for c2.0) - python
+        install_package "fastmcp" "pip"
+
+        # ripgrep
+        install_package "ripgrep" "cargo" "" "" "" "git" "https://github.com/BurntSushi/ripgrep.git" "master" "YES" "YES"
+
+        # bat
+        install_package "bat" "cargo" "" "" "" "git" "https://github.com/sharkdp/bat.git" "master" "YES" "YES"
+
+        # atac
+        install_package "atac" "cargo" "" "" "" "git" "https://github.com/Julien-cpsn/ATAC.git" "main" "YES" "YES"
+
+        # pygame - python
+        install_package "pygame" "pip"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
