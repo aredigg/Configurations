@@ -1345,7 +1345,22 @@ install_zig() {
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
+}
 
+install_npm() {
+    local package="$1"
+    if [[ $INSTALL_COMMAND == "install" ]]; then
+        sudo_check
+        print_status $package "INFO" "Installing"
+        sudo deno install --global --allow-all --name $package --root "$INSTALL_PREFIX" npm:$2
+    elif [[ $INSTALL_COMMAND == "remove" ]]; then
+        if [[ $package != "pip" ]]; then
+            print_status $package "WARN" "Uninstalling"
+            sudo_check
+            deno uninstall --root "$INSTALL_PREFIX" $package
+            uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
+        fi
+    fi
 }
 
 install_custom_x265() {
@@ -1491,6 +1506,7 @@ install_package() {
             swift)
                 ;;
             npm)
+                install_npm "$package" "$3" "$4" "$5"
                 ;;
             luarocks)
                 install_luarocks "$package"
@@ -2575,8 +2591,20 @@ main() {
         # atac
         install_package "atac" "cargo" "" "" "" "git" "https://github.com/Julien-cpsn/ATAC.git" "main" "YES" "YES"
 
+        # skim
+        install_package "skim" "cargo" "" "" "/skim" "git" "https://github.com/skim-rs/skim.git" "master" "YES" "YES"
+
         # pygame - python
         install_package "pygame" "pip"
+
+        # claude-code (versioned)
+        install_package "claude-code" "prebuilt" "" "" "" "https" "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.0.60/darwin-arm64/" "claude" "YES" "NO"
+
+        # gemini
+        install_package "gemini" "npm" "@google/gemini-cli"
+
+        # codex
+        install_package "codex" "cargo" "" "" "/codex-rs/tui" "git" "https://github.com/openai/codex.git" "main" "YES" "YES"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
