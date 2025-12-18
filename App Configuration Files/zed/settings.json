@@ -7,17 +7,85 @@
 // custom settings, run `zed: open default settings` from the
 // command palette (cmd-shift-p / ctrl-shift-p)
 {
-  "icon_theme": "VSCode Icons",
-  "show_inline_completions": false,
+  "agent": {
+    "default_profile": "ask+tool",
+    "default_model": {
+      "provider": "google",
+      "model": "gemini-3-pro-preview"
+    },
+    "model_parameters": [],
+    "profiles": {
+      "ask+tool": {
+        "name": "Ask with context tools",
+        "enable_all_context_servers": true,
+        "tools": {
+          "diagnostics": true,
+          "fetch": true,
+          "list_directory": true,
+          "project_notifications": false,
+          "now": true,
+          "find_path": true,
+          "read_file": true,
+          "open": true,
+          "grep": true,
+          "thinking": true,
+          "web_search": true
+        }
+      }
+    }
+  },
+  "use_system_window_tabs": false,
+  "bottom_dock_layout": "contained",
+  "tab_bar": {
+    "show_nav_history_buttons": false
+  },
+  "title_bar": {
+    "show_branch_icon": false
+  },
+  "debugger": {
+    "button": true
+  },
+  "search": {
+    "button": true
+  },
+  "status_bar": {
+    "active_language_button": true
+  },
+  "project_panel": {
+    "button": true
+  },
+  "diagnostics": {
+    "lsp_pull_diagnostics": {
+      "enabled": true
+    },
+    "inline": {
+      "enabled": false
+    }
+  },
+  "lsp_document_colors": "inlay",
+  "inlay_hints": {
+    "show_background": true
+  },
+  "indent_guides": {
+    "background_coloring": "disabled"
+  },
+  "toolbar": {
+    "agent_review": false
+  },
+  "unnecessary_code_fade": 0.5,
+  "icon_theme": "VSCode Icons for Zed (Dark Official Icons)",
+  "show_edit_predictions": false,
   "base_keymap": "VSCode",
   "ui_font_size": 16,
   "ui_font_family": ".SystemUIFont",
+  "ui_font_weight": 300,
   "buffer_font_family": "SF Mono",
   "buffer_font_size": null,
   "buffer_font_features": {
     "ss03": true
   },
   "buffer_font_weight": 100,
+  "buffer_line_height": "standard",
   "wrap_guides": [80, 120, 160],
   "soft_wrap": "none",
   "theme": {
@@ -26,19 +94,30 @@
     "dark": "Xcode Midnight"
   },
   "tabs": {
+    "show_diagnostics": "all",
     "git_status": true,
     "close_position": "left",
-    "file_icons": false
+    "file_icons": true
   },
   "journal": {
     "path": "~",
     "hour_format": "hour24"
   },
   "terminal": {
+    "toolbar": {
+      "breadcrumbs": false
+    },
     "option_as_meta": false,
     "line_height": "standard"
   },
+  "relative_line_numbers": "disabled",
   "languages": {
+    "Plain Text": {
+      "auto_indent_on_paste": false,
+      "auto_indent": false,
+      "show_wrap_guides": true,
+      "soft_wrap": "none"
+    },
     "Markdown": {
       "format_on_save": "on",
       "use_on_type_format": false,
@@ -51,15 +130,11 @@
       "language_servers": ["pyright", "ruff"],
       "format_on_save": "on",
       "formatter": [
+        { "code_action": "source.organizeImports.ruff" },
+        { "code_action": "source.fixAll.ruff" },
         {
           "language_server": {
             "name": "ruff"
-          }
-        },
-        {
-          "code_actions": {
-            "source.organizeImports.ruff": true,
-            "source.fixAll.ruff": true
           }
         }
       ]

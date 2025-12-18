@@ -1912,6 +1912,12 @@ main() {
                         " \
                         "" "git" "https://github.com/curl/curl.git" "master" "YES" "YES" # "curl-8_11_1"
 
+        # gnu-nano
+        install_package "nano" "configure" "./autogen.sh" "--enable-color -enable-extra --enable-multibuffer --enable-nanorc --enable-utf8" "" "git" "git://git.savannah.gnu.org/nano.git" "master" "YES" "YES"
+
+        # ne - nice editor
+        install_package "ne" "make_only" "" "build" "" "git" "https://github.com/vigna/ne.git" "master" "YES" "YES"
+
         # tcl (versioned) - openssl, libtommath
         install_package "tcl" "configure" "" "" "/macosx" "https" "https://downloads.sourceforge.net/project/tcl/Tcl/9.0.2/" "tcl9.0.2-src.tar.gz" "YES" "YES"
 
@@ -1988,6 +1994,15 @@ main() {
 
         # starship - rust
         install_package "starship" "cargo" "" "" "" "git" "https://github.com/starship/starship.git" "master" "YES" "YES"
+
+        # zsh-autosuggestions
+        install_package "zsh-autosuggestions" "make_only" "" "" "" "git" "https://github.com/zsh-users/zsh-autosuggestions.git" "master" "YES" "YES"
+
+        # zsh-autosuggestions
+        install_package "zsh-autosuggestions" "make_only" "" "" "" "git" "https://github.com/zsh-users/zsh-autosuggestions.git" "master" "YES" "YES"
+
+        # zsh-syntax-highlighting
+        install_package "zsh-syntax-highlighting" "make_only" "" "" "" "git" "https://github.com/zsh-users/zsh-syntax-highlighting.git" "master" "YES" "YES"
 
         # jdtls (versioned) - java, python
         install_package "jdtls" "prebuilt" "" "" "" "https" "https://download.eclipse.org/jdtls/milestones/1.54.0/" "jdt-language-server-1.54.0-202511261751.tar.gz" "YES" "NO"
@@ -2571,7 +2586,7 @@ main() {
         install_package "pgvector" "make_only" "" "" "" "git" "https://github.com/pgvector/pgvector.git" "master" "YES" "YES"
 
         # qt5 (versioned) too new cmake must fix
-        # install_package "qt5" "cmake" "" "" "" "git" "git://code.qt.io/qt/qt5.git" "dev" "YES" "YES"
+        install_package "qt5" "cmake" "" "" "" "git" "git://code.qt.io/qt/qt5.git" "dev" "YES" "YES"
 
         # exiftool (versioned)
         install_package "exiftool" "prebuilt" "" "" "" "https" "https://downloads.sourceforge.net/exiftool/" "Image-ExifTool-13.43.tar.gz" "YES" "YES"
@@ -2600,6 +2615,15 @@ main() {
         # pygame - python
         install_package "pygame" "pip"
 
+        # mlx-lm - python
+        install_package "mlx-lm" "pip"
+
+        # mlx-vlm - python
+        install_package "mlx-vlm" "pip"
+
+        # outlines - python
+        install_package "outlines" "pip"
+
         # claude-code (versioned)
         install_package "claude-code" "prebuilt" "" "" "" "https" "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.0.60/darwin-arm64/" "claude" "YES" "NO"
 
@@ -2608,6 +2632,12 @@ main() {
 
         # codex
         install_package "codex" "cargo" "" "" "/codex-rs/tui" "git" "https://github.com/openai/codex.git" "main" "YES" "YES"
+
+        # lmstudio-js
+        install_package "lmstudio-js" "npm" "@lmstudio/sdk"
+
+        # lmstudio-python - python
+        install_package "lmstudio" "pip"
 
         # wxwidgets
         install_package "wxwidgets" "configure" "" "" "" "git" "https://github.com/wxWidgets/wxWidgets.git" "master" "YES" "YES"

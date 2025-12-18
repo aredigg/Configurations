@@ -61,7 +61,7 @@ number_threshold = 1
 [python]
 python_binary = ['python3', 'python']
 format = ' [](frappe_crust)[](fg:frappe_yellow bg:frappe_crust)[ ($pyenv_prefix )($version)( \($virtualenv\))](fg:frappe_yellow bg:frappe_crust)[](frappe_crust)'
-version_format = '$major.$minor'
+version_format = '$raw'
 
 [status]
 format = '( $signal_name) $symbol '

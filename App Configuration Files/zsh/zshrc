@@ -1,0 +1,30 @@
+# Setup
+if [[ $TERM_PROGRAM == "ghostty" ]]; then
+    eval "$(starship init zsh)"
+fi
+
+# Change these
+source ~/.config/zsh-autosuggestions/zsh-autosuggestions.zsh
+source ~/.config/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+
+if [[ $TERM_PROGRAM == "ghostty" ]]; then
+    # ZSH HIGHLIGHT COLORS
+    ZSH_HIGHLIGHT_HIGHLIGHTERS=(main)
+    ZSH_HIGHLIGHT_STYLES[command]='fg=#40a02b'
+    ZSH_HIGHLIGHT_STYLES[function]='fg=#40a02b'
+    ZSH_HIGHLIGHT_STYLES[builtin]='fg=#40a02b,bold'
+    ZSH_HIGHLIGHT_STYLES[unknown]='fg=#e5c890'
+    ZSH_HIGHLIGHT_STYLES[unknown-token]='fg=#d20f39,bold'
+fi
+export HELIX_RUNTIME=/usr/local/libexec/helix/runtime
+
+# History settings
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_SAVE_NO_DUPS
+setopt HIST_IGNORE_SPACE
+
+# Python
+if [[ -d /Library/Frameworks/Python.framework/Versions/Current/bin ]]; then
+    export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:$PATH"
+fi
+

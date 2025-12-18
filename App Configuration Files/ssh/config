@@ -2,3 +2,22 @@ Host github.com
     AddKeysToAgent yes
     UseKeychain yes
     IdentityFile ~/.ssh/id_ed25519
+
+Host uio
+    HostName login.uio.no
+    User aredi
+    IdentityFile ~/.ssh/id_ed25519
+    
+Host ifi
+    HostName login.ifi.uio.no
+    User aredi
+    ProxyJump uio
+    IdentityFile ~/.ssh/id_ed25519
+
+Host in2090
+    HostName login.ifi.uio.no
+    User aredi
+    ProxyJump uio
+    IdentityFile ~/.ssh/id_ed25519
+    LocalForward 5432 dbpg-ifi-kurs03:5432
+
