@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-VERSION="1.18"
+VERSION="1.19"
 SKIPTIME="864000"
 SPINNER_INTERVAL=0.4
 SPINNER_PLAIN_INTERVAL=1
@@ -2516,7 +2516,7 @@ main() {
         install_package "zls" "zig" "" "" "" "git" "https://github.com/zigtools/zls.git" "master" "YES" "YES"
 
         # deno (versioned)
-        install_package "deno" "prebuilt" "" "" "" "https" "https://github.com/denoland/deno/releases/download/v2.5.6/" "deno-aarch64-apple-darwin.zip" "YES" "NO"
+        install_package "deno" "prebuilt" "" "" "" "https" "https://github.com/denoland/deno/releases/download/v2.6.1/" "deno-aarch64-apple-darwin.zip" "YES" "NO"
 
         # ruff - python
         install_package "ruff" "pip"
@@ -2564,8 +2564,11 @@ main() {
         # install_package "openai-whisper" "pip" "binary"
 
         # postgresql (versioned)
-        # install_package "postgresql" "meson" "" "" "" "git" "https://git.postgresql.org/git/postgresql.git" "REL_17_STABLE" "YES" "YES"
-        install_package "postgresql" "meson" "" "" "" "git" "https://github.com/postgres/postgres.git" "REL_17_STABLE" "YES" "YES"
+        # install_package "postgresql" "meson" "" "" "" "git" "https://git.postgresql.org/git/postgresql.git" "REL_18_STABLE" "YES" "YES"
+        install_package "postgresql" "meson" "" "" "" "git" "https://github.com/postgres/postgres.git" "REL_18_STABLE" "YES" "YES"
+
+        # pgvector
+        install_package "pgvector" "make_only" "" "" "" "git" "https://github.com/pgvector/pgvector.git" "master" "YES" "YES"
 
         # qt5 (versioned) too new cmake must fix
         # install_package "qt5" "cmake" "" "" "" "git" "git://code.qt.io/qt/qt5.git" "dev" "YES" "YES"
@@ -2605,6 +2608,21 @@ main() {
 
         # codex
         install_package "codex" "cargo" "" "" "/codex-rs/tui" "git" "https://github.com/openai/codex.git" "main" "YES" "YES"
+
+        # wxwidgets
+        install_package "wxwidgets" "configure" "" "" "" "git" "https://github.com/wxWidgets/wxWidgets.git" "master" "YES" "YES"
+
+        # erlang
+        install_package "erlang" "configure" "" "" "" "git" "https://github.com/erlang/otp.git" "master" "YES" "YES"
+
+        # golang (versioned)
+        install_package "golang" "prebuilt" "" "" "" "https" "https://go.dev/dl/" "go1.25.5.darwin-arm64.tar.gz" "YES" "NO"
+
+        # d2 (versioned) - building from source later
+        install_package "d2" "prebuilt" "" "" "" "https" "https://github.com/terrastruct/d2/releases/download/v0.7.1/" "d2-v0.7.1-macos-arm64.tar.gz" "YES" "NO"
+
+        # dia
+        install_package "dia" "meson" "" "" "" "git" "https://gitlab.gnome.org/GNOME/dia.git" "master" "YES" "YES"
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
