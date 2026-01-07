@@ -1,8 +1,9 @@
 #!/usr/bin/python3
-import sys
-import struct
 import json
+import struct
+import sys
 from pathlib import Path
+
 
 class MPEGParser:
     def __init__(self, filename):
@@ -48,7 +49,6 @@ class MPEGParser:
                 }
                 pos += size
 
-
     def _iterate_tree(self, b, e, parent):
         nodes = []
         for box in self._iterate_boxes(b, e):
@@ -57,11 +57,31 @@ class MPEGParser:
                 "start": box["start"],
                 "size": box["size"],
                 "header_size": box["header_size"],
-                "data_size": box["data_size"]
+                "data_size": box["data_size"],
             }
             if box["uuid"] is not None:
                 node["uuid"] = box["uuid"]
-            if box["type"] in ("moov", "udta", "ilst", "----", "trak", "mdia", "minf", "dinf", "dref", "stbl", "stsd", "sgpd", "sbgp", "mp4a", "esds", "avc1", "edts", "elst", "meta") or (parent and parent[-1] == "ilst"):
+            if box["type"] in (
+                "moov",
+                "udta",
+                "ilst",
+                "----",
+                "trak",
+                "mdia",
+                "minf",
+                "dinf",
+                "dref",
+                "stbl",
+                "stsd",
+                "sgpd",
+                "sbgp",
+                "mp4a",
+                "esds",
+                "avc1",
+                "edts",
+                "elst",
+                "meta",
+            ) or (parent and parent[-1] == "ilst"):
                 child_start = box["data_start"]
                 if box["type"] == "meta":
                     child_start += 4
@@ -90,6 +110,7 @@ class MPEGParser:
     def output(self):
         print(json.dumps(self._tree, indent=2, ensure_ascii=False))
 
+
 def main(argv):
     if len(argv) < 2:
         run_module = argv[0].split("/")[-1:][0]
@@ -101,6 +122,7 @@ def main(argv):
         parser.analyze()
         parser.output()
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))

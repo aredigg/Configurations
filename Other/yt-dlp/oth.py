@@ -3,7 +3,6 @@ import time
 from importlib.metadata import version
 
 import yt_dlp.version as YDLV  # noqa
-
 import ytb
 from cli_print_v2 import ANSI
 

@@ -11,13 +11,12 @@ import time
 from importlib.metadata import version
 from typing import TYPE_CHECKING, Any, Mapping, cast
 
-import yt_dlp.version as YDLV  # noqa
-from yt_dlp import YoutubeDL
-from yt_dlp.utils import RejectedVideoReached
-
 import util
+import yt_dlp.version as YDLV  # noqa
 from cli_print_v2 import ANSI, CLIPrint
 from logger import Logger
+from yt_dlp import YoutubeDL
+from yt_dlp.utils import RejectedVideoReached
 
 LOCAL_VERSION = "2.22"
 OUTPUT_DIRECTORY = "/Volumes/Delt/Prosjekter/yt-dlp/.cbtv2"
@@ -184,7 +183,10 @@ def run_ytdlp():
                                 color = ANSI.color("F09CBB") + ANSI.Bold
                             elif counter < 300:
                                 color = ANSI.color("89CFF0") + ANSI.Bold
-                            cli.header_print(f"{previous_date} {color}{counter:>3}\033[0m/{len(channels)}", 1)
+                            cli.header_print(
+                                f"{previous_date} {color}{counter:>3}\033[0m/{len(channels)}",
+                                1,
+                            )
                             if channel in finished_channels or channels[channel][0] == str(previous_date):
                                 cli.status_line(f"{ANSI.Bold}{channel}{ANSI.ResetBold} skipped")
                                 continue
@@ -230,8 +232,17 @@ def run_ytdlp():
                                                 ),
                                                 slot_index,
                                             )
-                                        p, q = download_manager(channels_prefix, channel, slot_index, postprocess_lock)
-                                        slots[slot_index] = {"process": p, "queue": q, "channel": channel}
+                                        p, q = download_manager(
+                                            channels_prefix,
+                                            channel,
+                                            slot_index,
+                                            postprocess_lock,
+                                        )
+                                        slots[slot_index] = {
+                                            "process": p,
+                                            "queue": q,
+                                            "channel": channel,
+                                        }
                                         finished_channels.append(channel)
                                         channels[channel][0] = str(datetime.datetime.now(datetime.timezone.utc).date())
                                         channels[channel][4] = res
@@ -327,7 +338,9 @@ def download_manager(channels_prefix, channel, slot_index, lock):
     assert slot_index < MAX_SLOTS, f"Slots over limit {slot_index}"
     q = multiprocessing.Queue()
     p = multiprocessing.Process(
-        target=_download_worker, args=(channels_prefix, channel, slot_index, q, lock), daemon=True
+        target=_download_worker,
+        args=(channels_prefix, channel, slot_index, q, lock),
+        daemon=True,
     )
     p.start()
     return p, q
@@ -490,7 +503,12 @@ def postprocessor_hook(data):
 
 
 def common_hook(hook, data, slot_index=None, cli_queue=None):
-    processes = {"Merger": "merging", "MoveFiles": "moving", "FixupM3u8": "adjusting", "": "Unknown"}
+    processes = {
+        "Merger": "merging",
+        "MoveFiles": "moving",
+        "FixupM3u8": "adjusting",
+        "": "Unknown",
+    }
     output = ""
     slot_output = (ANSI.Default + "●" + ANSI.Reset, "", "", "", "")
     # save data struct to a file
@@ -536,12 +554,24 @@ def common_hook(hook, data, slot_index=None, cli_queue=None):
                         os.remove(filename)
                     except Exception:
                         if cli_queue is not None:
-                            cli_queue.put(("status_line", (f"Error during remove: {filename}",), {}))
+                            cli_queue.put(
+                                (
+                                    "status_line",
+                                    (f"Error during remove: {filename}",),
+                                    {},
+                                )
+                            )
                 else:
                     if cli_queue is not None:
                         cli_queue.put(("status_line", (f"Error with file: {filename}",), {}))
                 if cli_queue is not None:
-                    cli_queue.put(("status_line", (f"{title} rejected: {elapsed} s < {MIN_DURATION} s",), {}))
+                    cli_queue.put(
+                        (
+                            "status_line",
+                            (f"{title} rejected: {elapsed} s < {MIN_DURATION} s",),
+                            {},
+                        )
+                    )
                 if slot_index:
                     slot_output = (
                         ANSI.BrRed + "●" + ANSI.Reset,

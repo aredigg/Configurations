@@ -3,7 +3,6 @@ import time
 from importlib.metadata import version
 
 import yt_dlp.version as YDLV  # noqa  # noqa
-
 import ytb
 
 LOCAL_VERSION = "2.01"

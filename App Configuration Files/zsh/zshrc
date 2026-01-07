@@ -1,11 +1,11 @@
-# Setup
+# Setup, we use custom chracters not in default Terminal in starship
 if [[ $TERM_PROGRAM == "ghostty" ]]; then
     eval "$(starship init zsh)"
 fi
 
-# Change these
-source ~/.config/zsh-autosuggestions/zsh-autosuggestions.zsh
-source ~/.config/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+# zsh
+source /usr/local/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+source /usr/local/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 
 if [[ $TERM_PROGRAM == "ghostty" ]]; then
     # ZSH HIGHLIGHT COLORS
@@ -28,3 +28,17 @@ if [[ -d /Library/Frameworks/Python.framework/Versions/Current/bin ]]; then
     export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:$PATH"
 fi
 
+# Color full-color lookup of hex values
+color() {
+    if [[ $# -eq 1 ]]; then
+        hex="${1#"#"}"
+        [[ ${#hex} -eq 3 ]] && hex="${hex:0:1}${hex:0:1}${hex:1:1}${hex:1:1}${hex:2:1}${hex:2:1}"
+        red=$((16#${hex:0:2})); grn=$((16#${hex:2:2})); blu=$((16#${hex:4:2}))
+    elif [[ $# -eq 3 ]]; then
+        red=$1; grn=$2; blu=$3
+        hex=$(printf '%02x%02x%02x' ${red} ${grn} ${blu})
+    else
+        printf "color (hex_value|red green blue)\n"
+    fi
+    printf "#${hex:u} = ▕\033[38;2;${red};${grn};${blu}m████\033[0m▏\n"
+}

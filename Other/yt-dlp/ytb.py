@@ -8,12 +8,11 @@ from collections import deque
 from importlib.metadata import version
 from typing import TYPE_CHECKING, cast
 
-import yt_dlp.version as YDLV  # noqa
-from yt_dlp import YoutubeDL
-
 import util
+import yt_dlp.version as YDLV  # noqa
 from cli_print_v2 import ANSI, CLIPrint
 from logger import Logger
+from yt_dlp import YoutubeDL
 
 if TYPE_CHECKING:
     from yt_dlp import _Params
@@ -67,12 +66,16 @@ YDL_OPTS = {
         #            "script_path": "/Users/aredigranes/.bgutil/bgutil-ytdlp-pot-provider/server/build/generate_once.js"
         #        },
     },  # cannot work together with cookies
-    "external_downloader_args": {"ffmpeg": ["-loglevel", "quiet", "-hide_banner", "-nostats"]},
+    "external_downloader_args": {
+        "ffmpeg": ["-loglevel", "quiet", "-hide_banner", "-nostats"]
+    },
     "downloader_args": {
         "ffmpeg": ["-loglevel", "quiet", "-hide_banner", "-nostats"],
         "ffmpeg_i": ["-rw_timeout", "30000000"],
     },
-    "postprocessor_args": {"ffmpeg": ["-loglevel", "error", "-hide_banner", "-nostats"]},
+    "postprocessor_args": {
+        "ffmpeg": ["-loglevel", "error", "-hide_banner", "-nostats"]
+    },
 }
 
 
@@ -143,7 +146,9 @@ def postprocessor_hook(data, depth=0):
         dur = util.time_formatted(*util.convert_seconds(int(info.get("duration") or 0)))
         upload_date = util.format_upload_date(info.get("upload_date") or "")
         format = util.get_format_string(info)
-        cli.tree_print(f"{dur} {format} ({info.get('id')}) {upload_date}", index=depth - 1, line=1)
+        cli.tree_print(
+            f"{dur} {format} ({info.get('id')}) {upload_date}", index=depth - 1, line=1
+        )
         filename = info.get("filename") or ""
         fnsplit = filename.split("/")
         if len(fnsplit) > 1:
@@ -211,24 +216,35 @@ def process_channel(ydl, channel, depth=0, index=0):
             if entries := list(info.get("entries")):
                 cli.tree_print(f"{title} ({len(entries)})", index=depth)
                 for i, entry in enumerate(entries, start=1):
-                    if entry and (entry_url := (entry.get("webpage_url") or entry.get("url"))):
+                    if entry and (
+                        entry_url := (entry.get("webpage_url") or entry.get("url"))
+                    ):
                         process_channel(ydl, entry_url, depth + 1, i)
         elif info_type == "url":
             cli.tree_print(f"URL TODO: {title}", index=depth)
         else:
             video_url = channel
-            cli.tree_print(f"{info.get('uploader') or info.get('channel') or info.get('extractor')}", index=depth)
+            cli.tree_print(
+                f"{info.get('uploader') or info.get('channel') or info.get('extractor')}",
+                index=depth,
+            )
             depth += 1
             cli.tree_print(
-                f"|{index:>4}| \033[1m{info.get('title')}\033[0m ({info.get('live_status')})", index=depth, line=0
+                f"|{index:>4}| \033[1m{info.get('title')}\033[0m ({info.get('live_status')})",
+                index=depth,
+                line=0,
             )
             formats = info.get("formats") or []
             upload_date = util.format_upload_date(info.get("upload_date") or "")
             if upload_date:
                 upload_date = datetime.datetime.strptime(upload_date, "%Y-%m-%d").date()
             else:
-                upload_date = datetime.datetime.fromtimestamp(int(info.get("timestamp") or 0)).date()
-            dur = util.time_formatted(*util.convert_seconds(int(info.get("duration") or 0)))
+                upload_date = datetime.datetime.fromtimestamp(
+                    int(info.get("timestamp") or 0)
+                ).date()
+            dur = util.time_formatted(
+                *util.convert_seconds(int(info.get("duration") or 0))
+            )
             cli.tree_print(
                 f"{dur} {util.get_best_format(formats)} ({info.get('id')}) {upload_date.strftime('%Y-%m-%d')}",
                 index=depth,
@@ -236,12 +252,18 @@ def process_channel(ydl, channel, depth=0, index=0):
             )
             if not ACCEPT_VERTICAL and util.enumerate_is_vertical(formats):
                 cli.tree_print("Vertical", index=depth + 1, line=1)
-                util.add_video_id(f"{ARCHIVED_FILE}", f"{info.get('extractor')} {info.get('id')}")
+                util.add_video_id(
+                    f"{ARCHIVED_FILE}", f"{info.get('extractor')} {info.get('id')}"
+                )
                 sleep_header(10)
-            elif not ACCEPT_LOW_RESOLUTION and util.enumerate_is_low_resolution(formats, MINIMUM_RESOLUTION):
+            elif not ACCEPT_LOW_RESOLUTION and util.enumerate_is_low_resolution(
+                formats, MINIMUM_RESOLUTION
+            ):
                 cli.tree_print("Low resolution", index=depth + 1, line=1)
                 if upload_date < datetime.date.today() - datetime.timedelta(weeks=200):
-                    util.add_video_id(f"{ARCHIVED_FILE}", f"{info.get('extractor')} {info.get('id')}")
+                    util.add_video_id(
+                        f"{ARCHIVED_FILE}", f"{info.get('extractor')} {info.get('id')}"
+                    )
                 sleep_header(10)
             elif util.enumerate_is_low_resolution(
                 formats, 1900
@@ -252,7 +274,9 @@ def process_channel(ydl, channel, depth=0, index=0):
                 availability = info.get("availability")
                 process_download([video_url], availability, depth + 1)
                 # sleep
-                output, duration = util.sleep_calc(min(int(info.get("duration") or 0) >> 1, random.randint(0, 1800)))
+                output, duration = util.sleep_calc(
+                    min(int(info.get("duration") or 0) >> 1, random.randint(0, 1800))
+                )
                 if output:
                     sleep_header(duration)
     else:
@@ -264,7 +288,9 @@ def sleep_header(duration):
     while (remaining := end_time - time.time()) > 0:
         hr, mn, sc = util.convert_seconds(int(remaining))
         if hr > 23:
-            cli.header_print(f"Sleeping for {hr // 24} days, {hr % 24} hours", 1, color=ANSI.BrBlack)
+            cli.header_print(
+                f"Sleeping for {hr // 24} days, {hr % 24} hours", 1, color=ANSI.BrBlack
+            )
             sleep_time = sc or (mn * 60 if mn else 3600)
         elif hr > 7:
             cli.header_print(f"Sleeping for {hr} hours", 1, color=ANSI.Cyan)
@@ -276,7 +302,9 @@ def sleep_header(duration):
             cli.header_print(f"Sleeping for {hr:02}:{mn:02}", 1, color=ANSI.Blue)
             sleep_time = sc or 60
         else:
-            cli.header_print(f"Sleep {sc + (mn * 60):02} s", 1, color=(ANSI.Blue + ANSI.Blink))
+            cli.header_print(
+                f"Sleep {sc + (mn * 60):02} s", 1, color=(ANSI.Blue + ANSI.Blink)
+            )
             sleep_time = 1
         time.sleep(min(sleep_time, remaining))
     cli.header_print("", 1, color=ANSI.Default)
@@ -288,7 +316,9 @@ def run_ytdlp():
     channels = []
     try:
         with open(f"{CHANNELS_FILE}", "r") as cf:
-            channels = [line.strip() for line in cf if line.strip() and not line.startswith("#")]
+            channels = [
+                line.strip() for line in cf if line.strip() and not line.startswith("#")
+            ]
     except FileNotFoundError:
         cli.status_line(f"Channel file {CHANNELS_FILE} not found")
     random.shuffle(channels)
@@ -309,11 +339,17 @@ def run_ytdlp():
                 while logger.if_error():
                     extractor, id, error_msg = logger.read_error()
                     if id == channel:
-                        cli.status_line(f"({extractor}) {channel} {ANSI.BrRed}{error_msg}{ANSI.Default}")
+                        cli.status_line(
+                            f"({extractor}) {channel} {ANSI.BrRed}{error_msg}{ANSI.Default}"
+                        )
                     elif extractor is None:
-                        cli.status_line(f"{channel} > {ANSI.BrRed}{error_msg}{ANSI.Default}")
+                        cli.status_line(
+                            f"{channel} > {ANSI.BrRed}{error_msg}{ANSI.Default}"
+                        )
                     else:
-                        cli.status_line(f"({extractor}) {channel} | {id} -> {ANSI.BrRed}{error_msg}{ANSI.Default}")
+                        cli.status_line(
+                            f"({extractor}) {channel} | {id} -> {ANSI.BrRed}{error_msg}{ANSI.Default}"
+                        )
                     sleep_header(5)
                     errors += 1
                 sleep_header(errors)

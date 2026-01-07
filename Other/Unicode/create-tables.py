@@ -27,7 +27,7 @@ def download_from_unicode(blocks_path: Path, txt_file: str):
     request = Request(UNICODE_URL + txt_file)
     try:
         with urlopen(request) as response:
-            blocks_path.write_bytes(response.read())
+            _ = blocks_path.write_bytes(response.read())
             r = True
     except HTTPError as e:
         print(f"Error {e.code} {e.reason}")
@@ -43,7 +43,9 @@ def check_file(txt_file: str) -> str:
             print(f"Could not download {txt_file}")
             return ""
     else:
-        modify_time = datetime.now(timezone.utc) - datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+        modify_time = datetime.now(timezone.utc) - datetime.fromtimestamp(
+            path.stat().st_mtime, timezone.utc
+        )
         if modify_time > timedelta(days=180):
             download_from_unicode(path, txt_file)
     return path.read_text() or ""
@@ -119,7 +121,9 @@ def main():
         s = "8" if b > 0x10000 else "4"
         header = f"{b:0{s}X}–{e:0{s}X} {d} "
         print(header + "│\n" + "─" * len(header) + "╯")
-        print(f"{' ':{s}} │" + "".join(f"  {x:02X} " for x in list(range(CHAR_COLUMNS))))
+        print(
+            f"{' ':{s}} │" + "".join(f"  {x:02X} " for x in list(range(CHAR_COLUMNS)))
+        )
         print(f"{'─' * (int(s))}─┼" + "─" * (CHAR_COLUMNS * 5))
         for c in range(b, e + 1):
             if c % CHAR_COLUMNS == 0:

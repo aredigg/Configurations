@@ -23,7 +23,7 @@ def circular_median(hours: list[int]) -> int:
         return hours[0]
 
     # Try each hour as a starting point
-    min_spread = float('inf')
+    min_spread = float("inf")
     best_median = hours[0]
 
     for start in range(24):

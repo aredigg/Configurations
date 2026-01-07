@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-VERSION="1.19"
+VERSION="1.20"
 SKIPTIME="864000"
 SPINNER_INTERVAL=0.4
 SPINNER_PLAIN_INTERVAL=1
@@ -27,10 +27,10 @@ FANCY_COLOR_SPIN_5="\033[38;2;0;0;0;48;2;35;38;52m"
 
 
 ################################################################################
-# Script to install common build tools, and cli utilities
+# Script to install common build tools, and cli utilities for DragonFlyBSD
 ################################################################################
 # ==============================================================================
-# ©️ 2025 Are Digranes. All rights reserved
+# ©️ 2025-26 Are Digranes. All rights reserved
 # ==============================================================================
 
 # Help output
@@ -50,7 +50,6 @@ Options:
   --version Show the version
   --prefix= Install prefix
   --debug   Output information to debug the script
-  --speak   Speak package and stages
   --plain   No fancy text
   --tool=   Use with remove to uninstall only one tool
   --archive Create tar.xz archives of the built install
@@ -76,23 +75,18 @@ print_status() {
     local status_color="$FANCY_COLOR_INFO_PRE"
     case $2 in
         INFO)
-            if [[ $SPEAK == ON ]]; then say -v Samantha "$1, $3"; fi
             status_color="$FANCY_COLOR_INFO_PRE"
             ;;
         WARN)
-            if [[ $SPEAK == ON ]]; then say -v Samantha "Warning: $1, $3"; fi
             status_color="$FANCY_COLOR_WARN_PRE"
             ;;
         DONE)
-            if [[ $SPEAK == ON ]]; then say -v Samantha "$1 done."; fi
             status_color="$FANCY_COLOR_DONE_PRE"
             ;;
         FAIL)
-            if [[ $SPEAK == ON ]]; then say -v Samantha "Error $3 exception, $1"; fi
             status_color="$FANCY_COLOR_FAIL_PRE"
             ;;
         *)
-            if [[ $SPEAK == ON ]]; then say -v Samantha "Unknown state $2. $1, $3"; fi
             status_color="$FANCY_COLOR_FAIL_PRE"
             ;;
     esac
@@ -103,19 +97,7 @@ print_status() {
     fi
 }
 
-sudo_check() {
-    if ! sudo -Nnv 2>/dev/null; then
-        sudo -K
-        if [[ $SPEAK == ON ]]; then
-            say -v Samantha "Please enter password for system install"
-        fi
-        if [[ $PLAIN_TEXT != ON ]]; then
-            printf "\033[3;1H" > /dev/tty
-        fi
-        sudo -v -p "Please enter password for system install: "
-        printf "\033[3;1H%-${COLUMNS}s\033[2;1H\n" " " > /dev/tty
-    fi
-}
+# sudo_check() this script should be run as root
 
 uninstall_manifested() {
     local package=$1
@@ -128,8 +110,7 @@ uninstall_manifested() {
         while IFS= read -r uninstall_file; do
             if [ -f "$uninstall_file" ]; then
                 print "Removing $uninstall_file"
-                sudo_check
-                sudo rm "$uninstall_file"
+                rm "$uninstall_file"
             fi
             uninstall_directories+=($(dirname "$uninstall_file"))
         done < "$manifest_file"
@@ -139,12 +120,10 @@ uninstall_manifested() {
         for uninstall_directory in "${uninstall_directories[@]}"; do
             if [[ -d "$uninstall_directory" ]]; then
                 print "Checking $uninstall_directory"
-                sudo_check
-                sudo find "$uninstall_directory" -type l ! -exec test -e {} \; -exec rm -f {} \;
+                find "$uninstall_directory" -type l ! -exec test -e {} \; -exec rm -f {} \;
                 if [[ -z "$(ls -A "$uninstall_directory")" ]]; then
                     print "Removing $uninstall_directory"
-                    sudo_check
-                    sudo rm -rf "$uninstall_directory"
+                    rm -rf "$uninstall_directory"
                 fi
             fi
         done
@@ -155,9 +134,9 @@ uninstall_manifested() {
 }
 
 check_activity() {
-    local last_activity_one=$(stat -f "%Dm" -t %s "$1")
+    local last_activity_one=$(stat -f "%m" "$1")
     if [[ -z "$last_activity_one" ]]; then return 1; fi
-    local last_activity_two=$(stat -f "%Dm" -t %s "$2")
+    local last_activity_two=$(stat -f "%m" "$2")
     if [[ -z "$last_activity_two" ]]; then return 1; fi
     if [ "$last_activity_one" -gt "$last_activity_two" ]; then
         echo $(( $(date +%s) - last_activity_one ))
@@ -226,16 +205,14 @@ spinner() {
     fi
 }
 
-# adds LC_RPATH if it is not found, $1-filename $2-rpath
 add_rpath() {
-    if [[ -f "$1" ]]; then
-        if ! otool -l "$1" | grep -q "LC_RPATH"; then
-            print_status $package "INFO" "Setting rpath"
-            sudo_check
-            sudo install_name_tool -add_rpath "$2" "$1"
-        else
-            print_status $package "WARN" "rpath already set"
-        fi
+    local filename="$1"
+    local rpath="$2"
+    # Check if rpath already exists
+    if ! readelf -d "$filename" 2>/dev/null | grep -q "RUNPATH.*$rpath"; then
+        patchelf --add-rpath "$rpath" "$filename" 2>/dev/null || \
+        chrpath -r "$rpath" "$filename" 2>/dev/null || \
+        print_status "$(basename $filename)" "WARN" "Could not add rpath"
     fi
 }
 
@@ -253,7 +230,7 @@ create_archive() {
 # ==============================================================================
 setup() {
     # Evaluate arguments and assign to various variables
-    INSTALL_PREFIX="/usr/local"
+    INSTALL_PREFIX="/opt/local"
     INSTALL_SINGLE_TOOL=""
     DEBUG=OFF
     SPEAK=OFF
@@ -280,9 +257,6 @@ setup() {
             --debug)
                 DEBUG=ON
                 ;;
-            --speak)
-                SPEAK=ON
-                ;;
             --plain)
                 PLAIN_TEXT=ON
                 ;;
@@ -302,25 +276,23 @@ setup() {
         output_help "ERROR: Unknown command $INSTALL_COMMAND\n"
         exit 0
     fi
-    SDK_PATH="$(xcrun --show-sdk-path)"
-    INSTALL_CERTS_DIRECTORY="$INSTALL_PREFIX/etc/ssl"
-    INSTALL_ROOT_CERTS="$INSTALL_CERTS_DIRECTORY/cert.pem"
-    export PATH="${PATH:-}:${INSTALL_PREFIX}/bin"
-    export SCRIPT_PYTHONPATH=$(dirname $(which python3))
-    export MACOSX_DEPLOYMENT_TARGET=26.00
+    INSTALL_ROOT_CERTS="/etc/ssl/cert.pem"
     print -- "Pos $positional_args"
     print -- "Unk $unknown_args"
-    CONCURRENT_JOBS=$(("$(getconf _NPROCESSORS_ONLN)" + "$(echo "$(getconf _NPROCESSORS_ONLN) / 2" | bc)"))
-    SWD="$PWD/.temp"
+    CONCURRENT_JOBS=$(sysctl -n hw.ncpu)
+    SWD="/build/temporary"
     MANIFEST_DIRECTORY="$SWD/manifests"
     ARCHIVE_DIRECTORY="$SWD/archives"
     SOURCES_DIRECTORY="$SWD/sources"
     BUILDS_DIRECTORY="$SWD/builds"
     LOGS_DIRECTORY="$SWD/logs"
-    mkdir -p "$MANIFEST_DIRECTORY" "$ARCHIVE_DIRECTORY" "$SOURCES_DIRECTORY" "$BUILDS_DIRECTORY" "$LOGS_DIRECTORY"
+    BOOTSTRAP_PREFIX="$SWD/bootstrap"
+    mkdir -p "$MANIFEST_DIRECTORY" "$ARCHIVE_DIRECTORY" "$SOURCES_DIRECTORY" "$BUILDS_DIRECTORY" "$LOGS_DIRECTORY" "$BOOTSTRAP_PREFIX"
     INSTALL_LOG_OUT="$LOGS_DIRECTORY/log_out.log"
     INSTALL_LOG_ERR="$LOGS_DIRECTORY/log_err.log"
-    while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+    export PATH="${BOOTSTRAP_PREFIX}/bin:${INSTALL_PREFIX}/bin:${PATH:-}"
+    export SCRIPT_PYTHONPATH=$(dirname $(which python3))
+    while true; do; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
     if [[ $PLAIN_TEXT == OFF ]]; then
         print "\033[2J\033[?25l\n"
     fi
@@ -357,555 +329,182 @@ script_trap() {
 # Patches
 # ==============================================================================
 
-patch_vhdl_ls() {
-    local package=$1
-    local diff_filename=$2
-    if [[ ! -f $diff_filename ]]; then
-        tee "$diff_filename" > /dev/null << EOF
-diff --git a/vhdl_lang/src/analysis/names.rs b/vhdl_lang/src/analysis/names.rs
-index 66d7875..a8414cd 100644
---- a/vhdl_lang/src/analysis/names.rs
-+++ b/vhdl_lang/src/analysis/names.rs
-@@ -466,8 +466,10 @@ pub fn as_type_conversion(
-     assocs: &mut [AssociationElement],
- ) -> Option<(TokenSpan, &mut Expression)> {
-     if assocs.len() == 1 && could_be_indexed_name(assocs) {
--        if let ActualPart::Expression(ref mut expr) = assocs[0].actual.item {
--            return Some((assocs[0].actual.span, expr));
-+        let actual = &mut assocs[0].actual;
-+        if let ActualPart::Expression(ref mut expr) = actual.item {
-+            let span = actual.span;
-+            return Some((span, expr));
-         }
-     }
-     None
-EOF
-    fi
-    git apply $diff_filename
-}
-
-patch_libtiff() {
-}
-
-patch_libtiff_x() {
-    local package=$1
-    local diff_filename=$2
-    if [[ ! -f $diff_filename ]]; then
-        tee "$diff_filename" > /dev/null << EOF
-diff --git a/autogen.sh b/autogen.sh
-index 2e6c6bd0..544c99aa 100755
---- a/autogen.sh
-+++ b/autogen.sh
-@@ -16,16 +16,5 @@ aclocal -I ./m4 || retval=\$?
- autoheader || retval=\$?
- automake --foreign --add-missing --copy || retval=\$?
- autoconf || retval=\$?
--# Get latest config.guess and config.sub from upstream master since
--# these are often out of date.
--for file in config.guess config.sub
--do
--    echo "\$0: getting \$file..."
--    wget -q --timeout=5 -O config/\$file.tmp \\
--      "https://git.savannah.gnu.org/cgit/config.git/plain/\${file}" \\
--      && mv -f config/\$file.tmp config/\$file \\
--      && chmod a+x config/\$file || retval=\$?
--    rm -f config/\$file.tmp
--done
-
- exit \$retval
-EOF
-    fi
-    git apply $diff_filename
-}
-
-patch_x265() {
-    local package=$1
-    local diff_filename=$2
-    if [[ ! -f $diff_filename ]]; then
-        tee "$diff_filename" > /dev/null << EOF
-diff --git a/source/CMakeLists.txt b/source/CMakeLists.txt
-index 37dbe1a87..e072de6e8 100755
---- a/source/CMakeLists.txt
-+++ b/source/CMakeLists.txt
-@@ -6,18 +6,18 @@ if(NOT CMAKE_BUILD_TYPE)
-         FORCE)
- endif()
- message(STATUS "cmake version \${CMAKE_VERSION}")
--if(POLICY CMP0025)
--    cmake_policy(SET CMP0025 OLD) # report Apple's Clang as just Clang
--endif()
-+# if(POLICY CMP0025)
-+#     cmake_policy(SET CMP0025 OLD) # report Apple's Clang as just Clang
-+# endif()
- if(POLICY CMP0042)
-     cmake_policy(SET CMP0042 NEW) # MACOSX_RPATH
- endif()
--if(POLICY CMP0054)
--    cmake_policy(SET CMP0054 OLD) # Only interpret if() arguments as variables or keywords when unquoted
--endif()
-+# if(POLICY CMP0054)
-+#     cmake_policy(SET CMP0054 OLD) # Only interpret if() arguments as variables or keywords when unquoted
-+# endif()
-
- project (x265)
--cmake_minimum_required (VERSION 2.8.8) # OBJECT libraries require 2.8.8
-+cmake_minimum_required (VERSION 3.5) # OBJECT libraries require 2.8.8
- include(CheckIncludeFiles)
- include(CheckFunctionExists)
- include(CheckSymbolExists)
-diff --git a/source/dynamicHDR10/CMakeLists.txt b/source/dynamicHDR10/CMakeLists.txt
-index 22fb79d44..da907bcd6 100644
---- a/source/dynamicHDR10/CMakeLists.txt
-+++ b/source/dynamicHDR10/CMakeLists.txt
-@@ -10,7 +10,7 @@ add_library(dynamicHDR10 OBJECT
-     hdr10plus.h
-     api.cpp )
-
--cmake_minimum_required (VERSION 2.8.11)
-+cmake_minimum_required (VERSION 3.5)
- project(dynamicHDR10)
- include(CheckIncludeFiles)
- include(CheckFunctionExists)
-EOF
-    fi
-
-    git apply $diff_filename
-}
-
-patch_ffmpeg() {
-    local package=$1
-    local diff_filename=$2
-        if [[ ! -f "${diff_filename}_2" ]]; then
-            tee "${diff_filename}_2" > /dev/null << EOF
-diff --git a/libavfilter/af_asr.c b/libavfilter/af_asr.c
-index 8e8eeb19a7..bba793cfb5 100644
---- a/libavfilter/af_asr.c
-+++ b/libavfilter/af_asr.c
-@@ -41,7 +41,7 @@ typedef struct ASRContext {
-     char *logfn;
-
-     ps_decoder_t *ps;
--    cmd_ln_t *config;
-+    ps_config_t *config;
-
-     int utt_started;
- } ASRContext;
-@@ -100,16 +100,16 @@ static av_cold int asr_init(AVFilterContext *ctx)
-     ASRContext *s = ctx->priv;
-     const float frate = s->rate;
-     char *rate = av_asprintf("%f", frate);
--    const char *argv[] = { "-logfn",    s->logfn,
--                           "-hmm",      s->hmm,
--                           "-lm",       s->lm,
--                           "-lmctl",    s->lmctl,
--                           "-lmname",   s->lmname,
--                           "-dict",     s->dict,
--                           "-samprate", rate,
--                           NULL };
--
--    s->config = cmd_ln_parse_r(NULL, ps_args(), 14, (char **)argv, 0);
-+
-+    s->config = ps_config_init(NULL);
-+    ps_config_set_str(s->config, "logfn", s->logfn);
-+    ps_config_set_str(s->config, "hmm", s->hmm);
-+    ps_config_set_str(s->config, "lm", s->lm);
-+    ps_config_set_str(s->config, "lmctl", s->lmctl);
-+    ps_config_set_str(s->config, "lmname", s->lmname);
-+    ps_config_set_str(s->config, "dict", s->dict);
-+    ps_config_set_str(s->config, "samprate", rate);
-+
-     av_free(rate);
-     if (!s->config)
-         return AVERROR(ENOMEM);
-@@ -160,7 +160,7 @@ static av_cold void asr_uninit(AVFilterContext *ctx)
-
-     ps_free(s->ps);
-     s->ps = NULL;
--    cmd_ln_free_r(s->config);
-+    ps_config_free(s->config);
-     s->config = NULL;
- }
-
-EOF
-         fi
-         git apply "${diff_filename}_2"
-}
-
-patch_ffmpeg_metal() {
-    local package=$1
-    local diff_filename=$2
-        if [[ ! -f "${diff_filename}_metal" ]]; then
-            tee "${diff_filename}_metal" > /dev/null << EOF
-diff --git a/ffbuild/common.mak b/ffbuild/common.mak
---- a/ffbuild/common.mak
-+++ b/ffbuild/common.mak
-@@ -12,6 +12,11 @@
-
- ifndef SUBDIR
-
-+# Force Metal tools through xcrun to use the active Xcode toolchain.
-+# Unconditional on all platforms as requested.
-+override METALCC  := xcrun -sdk macosx metal
-+override METALLIB := xcrun -sdk macosx metallib
-+
- LINK = \$(LD) \$(1)
-
- ifeq (\$(LD),\$(CC))
-EOF
-          fi
-          git apply "${diff_filename}_metal"
- }
-
-
-patch_ffmpeg_x() {
-    local package=$1
-    local diff_filename=$2
-    if [[ ! -f $diff_filename ]]; then
-        tee "$diff_filename" > /dev/null << EOF
-diff --git a/libavdevice/opengl_enc.c b/libavdevice/opengl_enc.c
-index 93d3959880..25eba7d7cf 100644
---- a/libavdevice/opengl_enc.c
-+++ b/libavdevice/opengl_enc.c
-@@ -117,7 +117,7 @@ typedef void   (APIENTRY *FF_PFNGLATTACHSHADERPROC) (GLuint program, GLuint shad
- typedef GLuint (APIENTRY *FF_PFNGLCREATESHADERPROC) (GLenum type);
- typedef void   (APIENTRY *FF_PFNGLDELETESHADERPROC) (GLuint shader);
- typedef void   (APIENTRY *FF_PFNGLCOMPILESHADERPROC) (GLuint shader);
--typedef void   (APIENTRY *FF_PFNGLSHADERSOURCEPROC) (GLuint shader, GLsizei count, const char* *string, const GLint *length);
-+typedef void   (APIENTRY *FF_PFNGLSHADERSOURCEPROC) (GLuint shader, GLsizei count, const char* const *string, const GLint *length);
- typedef void   (APIENTRY *FF_PFNGLGETSHADERIVPROC) (GLuint shader, GLenum pname, GLint *params);
- typedef void   (APIENTRY *FF_PFNGLGETSHADERINFOLOGPROC) (GLuint shader, GLsizei bufSize, GLsizei *length, char *infoLog);
-
-EOF
-        fi
-        git apply $diff_filename
-        if [[ ! -f "${diff_filename}_2" ]]; then
-            tee "${diff_filename}_2" > /dev/null << EOF
-diff --git a/libavfilter/af_asr.c b/libavfilter/af_asr.c
-index 8e8eeb19a7..bba793cfb5 100644
---- a/libavfilter/af_asr.c
-+++ b/libavfilter/af_asr.c
-@@ -41,7 +41,7 @@ typedef struct ASRContext {
-     char *logfn;
-
-     ps_decoder_t *ps;
--    cmd_ln_t *config;
-+    ps_config_t *config;
-
-     int utt_started;
- } ASRContext;
-@@ -100,16 +100,16 @@ static av_cold int asr_init(AVFilterContext *ctx)
-     ASRContext *s = ctx->priv;
-     const float frate = s->rate;
-     char *rate = av_asprintf("%f", frate);
--    const char *argv[] = { "-logfn",    s->logfn,
--                           "-hmm",      s->hmm,
--                           "-lm",       s->lm,
--                           "-lmctl",    s->lmctl,
--                           "-lmname",   s->lmname,
--                           "-dict",     s->dict,
--                           "-samprate", rate,
--                           NULL };
--
--    s->config = cmd_ln_parse_r(NULL, ps_args(), 14, (char **)argv, 0);
-+
-+    s->config = ps_config_init(NULL);
-+    ps_config_set_str(s->config, "logfn", s->logfn);
-+    ps_config_set_str(s->config, "hmm", s->hmm);
-+    ps_config_set_str(s->config, "lm", s->lm);
-+    ps_config_set_str(s->config, "lmctl", s->lmctl);
-+    ps_config_set_str(s->config, "lmname", s->lmname);
-+    ps_config_set_str(s->config, "dict", s->dict);
-+    ps_config_set_str(s->config, "samprate", rate);
-+
-     av_free(rate);
-     if (!s->config)
-         return AVERROR(ENOMEM);
-@@ -160,7 +160,7 @@ static av_cold void asr_uninit(AVFilterContext *ctx)
-
-     ps_free(s->ps);
-     s->ps = NULL;
--    cmd_ln_free_r(s->config);
-+    ps_config_free(s->config);
-     s->config = NULL;
- }
-
-EOF
-         fi
-         git apply "${diff_filename}_2"
-}
-
-patch_bochs() {
-    local package=$1
-    local diff_filename=$2
-    if [[ ! -f $diff_filename ]]; then
-        tee "$diff_filename" > /dev/null << EOF
-diff --git a/bochs/gui/keymap.cc b/bochs/gui/keymap.cc
-index 930d9fd22..4d33f4533 100644
---- a/bochs/gui/keymap.cc
-+++ b/bochs/gui/keymap.cc
-@@ -30,10 +30,6 @@
- #include "gui.h"
- #include "keymap.h"
-
--#if defined(__APPLE__)
--#include <libgen.h>
--#endif
--
- // Table of bochs "BX_KEY_*" symbols
- // the table must be in BX_KEY_* order
- const char *bx_key_symbol[BX_KEY_NBKEYS] = {
-EOF
-    fi
-    git apply "${diff_filename}"
-}
-
-patch_mdcat() {
-    local package=$1
-    local diff_filename=$2
-    if [[ ! -f $diff_filename ]]; then
-        tee "$diff_filename" > /dev/null << 'EOF'
-diff --git a/pulldown-cmark-mdcat/src/terminal/osc.rs b/pulldown-cmark-mdcat/src/terminal/osc.rs
-index 8fa2db6..dc2a2da 100644
---- a/pulldown-cmark-mdcat/src/terminal/osc.rs
-+++ b/pulldown-cmark-mdcat/src/terminal/osc.rs
-@@ -20,9 +20,6 @@ pub fn write_osc<W: Write + ?Sized>(writer: &mut W, command: &str) -> Result<()>
-     Ok(())
- }
-
--#[derive(Debug, PartialEq, Eq, Copy, Clone)]
--pub struct Osc8Links;
--
- /// Whether the given `url` needs to get an explicit host.
- ///
- /// [OSC 8] links require that `file://` URLs give an explicit hostname, as
-EOF
-    fi
-    git apply "${diff_filename}"
-}
-
 
 # PKG for builtins
 # ==============================================================================
 
-install_pkg_zlib() {
-    sudo_check
-    if [[ $INSTALL_COMMAND == "remove" ]]; then
-        if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/zlib.pc" ]]; then
-            sudo rm "$INSTALL_PREFIX/lib/pkgconfig/zlib.pc"
-        fi
-    elif [[ $INSTALL_COMMAND == "install" ]]; then
-        if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/zlib.pc" ]]; then
-            sudo tee "$INSTALL_PREFIX/lib/pkgconfig/zlib.pc" > /dev/null << EOF
-prefix=$SDK_PATH/usr
-exec_prefix=/usr
-bindir=/usr/bin
-libdir=/usr/lib
-includedir=$SDK_PATH/usr/include
+# Add to your script after setup()
+
+install_builtin_pc() {
+    local pc_dir="$INSTALL_PREFIX/lib/pkgconfig"
+    mkdir -p "$pc_dir"
+
+    print_status "pkgconfig" "INFO" "Generating pkgconfig"
+
+    # zlib
+    if [[ -f /usr/lib/libz.so ]] && [[ -f /usr/include/zlib.h ]]; then
+        local zlib_version=$(grep '#define ZLIB_VERSION' /usr/include/zlib.h | cut -d'"' -f2)
+        cat > "$pc_dir/zlib.pc" << EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
 
 Name: zlib
-Description: Compression library
-Version: 1.2.11
-Libs: -L/usr/lib -lz
+Description: zlib compression library
+Version: ${zlib_version:-1.2.11}
+Libs: -L\${libdir} -lz
+Cflags: -I\${includedir}
 EOF
-        fi
     fi
-}
 
-install_pkg_xml2() {
-    sudo_check
-    if [[ $INSTALL_COMMAND == "remove" ]]; then
-        if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/libxml-2.0.pc" ]]; then
-            sudo rm "$INSTALL_PREFIX/lib/pkgconfig/libxml-2.0.pc"
-        fi
-    elif [[ $INSTALL_COMMAND == "install" ]]; then
-        if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/libxml-2.0.pc" ]]; then
-            sudo tee "$INSTALL_PREFIX/lib/pkgconfig/libxml-2.0.pc" > /dev/null << EOF
-prefix=$SDK_PATH/usr
-exec_prefix=/usr
-bindir=/usr/bin
-libdir=/usr/lib
-includedir=$SDK_PATH/usr/include
+    # bzip2
+    if [[ -f /usr/lib/libbz2.so ]] && [[ -f /usr/include/bzlib.h ]]; then
+        local bz2_version=$(grep 'version.*of.*bzip2' /usr/include/bzlib.h 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        cat > "$pc_dir/bzip2.pc" << EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: bzip2
+Description: bzip2 compression library
+Version: ${bz2_version:-1.0.8}
+Libs: -L\${libdir} -lbz2
+Cflags: -I\${includedir}
+EOF
+    fi
+
+    # liblzma (xz)
+    if [[ -f /usr/lib/liblzma.so ]] && [[ -f /usr/include/lzma.h ]]; then
+        local lzma_version=$(grep '#define LZMA_VERSION_STRING' /usr/include/lzma/version.h 2>/dev/null | cut -d'"' -f2)
+        cat > "$pc_dir/liblzma.pc" << EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: liblzma
+Description: LZMA compression library
+Version: ${lzma_version:-5.4.0}
+Libs: -L\${libdir} -llzma
+Libs.private: -pthread
+Cflags: -I\${includedir}
+EOF
+    fi
+
+    # expat
+    if [[ -f /usr/lib/libexpat.so ]] && [[ -f /usr/include/expat.h ]]; then
+        local expat_major=$(grep '#define XML_MAJOR_VERSION' /usr/include/expat.h | awk '{print $3}')
+        local expat_minor=$(grep '#define XML_MINOR_VERSION' /usr/include/expat.h | awk '{print $3}')
+        local expat_micro=$(grep '#define XML_MICRO_VERSION' /usr/include/expat.h | awk '{print $3}')
+        local expat_version="${expat_major:-2}.${expat_minor:-5}.${expat_micro:-0}"
+        cat > "$pc_dir/expat.pc" << EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: expat
+Description: expat XML parser
+Version: ${expat_version}
+Libs: -L\${libdir} -lexpat
+Cflags: -I\${includedir}
+EOF
+    fi
+
+    # libxml2
+    if [[ -f /usr/lib/libxml2.so ]] && [[ -f /usr/include/libxml2/libxml/xmlversion.h ]]; then
+        local xml2_version=$(grep '#define LIBXML_DOTTED_VERSION' /usr/include/libxml2/libxml/xmlversion.h | cut -d'"' -f2)
+        cat > "$pc_dir/libxml-2.0.pc" << EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include/libxml2
 
 Name: libXML
-Description: XML toolkit version 2
-Version: 2.9.4
+Description: libXML library version2
+Version: ${xml2_version:-2.9.0}
 Libs: -L\${libdir} -lxml2
-Libs.private: -lz -lpthread -licucore -lm
-EOF
-        fi
-    fi
-}
-
-install_pkg_lffi() {
-sudo_check
-if [[ $INSTALL_COMMAND == "remove" ]]; then
-    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/libffi.pc" ]]; then
-        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/libffi.pc"
-    fi
-elif [[ $INSTALL_COMMAND == "install" ]]; then
-    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/libffi.pc" ]]; then
-        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/libffi.pc" > /dev/null << EOF
-prefix=$SDK_PATH/usr
-exec_prefix=/usr
-bindir=/usr/bin
-libdir=/usr/lib
-includedir=$SDK_PATH/usr/include/ffi
-
-Name: libffi
-Description: Library supporting Foreign Function Interfaces
-Version: 3.3.0
+Libs.private: -lz -llzma -lm
 Cflags: -I\${includedir}
-Libs: -L\${libdir} -lffi
 EOF
     fi
-fi
-}
 
-install_pkg_ncurses() {
-sudo_check
-if [[ $INSTALL_COMMAND == "remove" ]]; then
-    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/ncurses.pc" ]]; then
-        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/ncurses.pc"
-    fi
-elif [[ $INSTALL_COMMAND == "install" ]]; then
-    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/ncurses.pc" ]]; then
-        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/ncurses.pc" > /dev/null << EOF
-prefix=$SDK_PATH/usr
-exec_prefix=/usr
-bindir=/usr/bin
-libdir=/usr/lib
-includedir=$SDK_PATH/usr/include
+    # iconv (usually in libc on DragonFlyBSD, but some packages expect a .pc)
+    cat > "$pc_dir/iconv.pc" << EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
 
-Name: ncurses
-Description: Free software emulation of curses
-Version: 5.7.20081102
-Libs: -L\${libdir} -lncurses
+Name: iconv
+Description: libiconv character set conversion (libc implementation)
+Version: 1.0
+Libs:
+Cflags:
 EOF
-    fi
-fi
-}
 
-install_pkg_ncursesw() {
-sudo_check
-if [[ $INSTALL_COMMAND == "remove" ]]; then
-    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/ncursesw.pc" ]]; then
-        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/ncursesw.pc"
-    fi
-elif [[ $INSTALL_COMMAND == "install" ]]; then
-    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/ncursesw.pc" ]]; then
-        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/ncursesw.pc" > /dev/null << EOF
-prefix=$SDK_PATH/usr
-exec_prefix=/usr
-bindir=/usr/bin
-libdir=/usr/lib
-includedir=$SDK_PATH/usr/include
+    # pthread
+    cat > "$pc_dir/pthread.pc" << EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
 
-Name: ncursesw
-Description: Free software emulation of curses
-Version: 5.7.20081102
-Libs: -L\${libdir} -lncurses
+Name: pthread
+Description: POSIX threads (libc implementation)
+Version: 1.0
+Libs: -pthread
+Cflags: -pthread
 EOF
-    fi
-fi
+
+    # libm
+    cat > "$pc_dir/libm.pc" << EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: libm
+Description: Math library (libc)
+Version: 1.0
+Libs: -lm
+Cflags:
+EOF
+
+    # libdl (dlopen, etc. - usually in libc on BSD)
+    cat > "$pc_dir/libdl.pc" << EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: libdl
+Description: Dynamic linking library (libc)
+Version: 1.0
+Libs:
+Cflags:
+EOF
+
+    # librt (usually in libc on BSD)
+    cat > "$pc_dir/librt.pc" << EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: librt
+Description: POSIX realtime library (libc)
+Version: 1.0
+Libs:
+Cflags:
+EOF
 }
 
 # Manual PKG
 # ==============================================================================
-install_pkg_glesv1_cm() {
-sudo_check
-if [[ $INSTALL_COMMAND == "remove" ]]; then
-    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/glesv1_cm.pc" ]]; then
-        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/glesv1_cm.pc"
-    fi
-elif [[ $INSTALL_COMMAND == "install" ]]; then
-    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/glesv1_cm.pc" ]]; then
-        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/glesv1_cm.pc" > /dev/null << EOF
-prefix=$INSTALL_PREFIX
-exec_prefix=\${prefix}
-libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
 
-Name: GLESv1_CM
-Description: ANGLE OpenGL ES 1.1 CM
-Version: 1.1
-Libs: -L\${libdir} -lGLESv1_CM
-Cflags: -I\${includedir}
-EOF
-    fi
-fi
-}
-
-install_pkg_glesv2() {
-sudo_check
-if [[ $INSTALL_COMMAND == "remove" ]]; then
-    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/glesv2.pc" ]]; then
-        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/glesv2.pc"
-    fi
-elif [[ $INSTALL_COMMAND == "install" ]]; then
-    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/glesv2.pc" ]]; then
-        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/glesv2.pc" > /dev/null << EOF
-prefix=$INSTALL_PREFIX
-exec_prefix=\${prefix}
-libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
-
-Name: GLESv2
-Description: ANGLE OpenGL ES 2.0
-Version: 3.0
-Libs: -L\${libdir} -lGLESv2
-Cflags: -I\${includedir}
-EOF
-    fi
-fi
-}
-
-install_pkg_egl() {
-sudo_check
-if [[ $INSTALL_COMMAND == "remove" ]]; then
-    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/egl.pc" ]]; then
-        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/egl.pc"
-    fi
-elif [[ $INSTALL_COMMAND == "install" ]]; then
-    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/egl.pc" ]]; then
-        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/egl.pc" > /dev/null << EOF
-prefix=$INSTALL_PREFIX
-exec_prefix=\${prefix}
-libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
-
-Name: EGL
-Description: ANGLE EGL
-Version: 1.5
-Libs: -L\${libdir} -lEGL
-Cflags: -I\${includedir}
-EOF
-    fi
-fi
-}
-
-install_pkg_libomp() {
-sudo_check
-if [[ $INSTALL_COMMAND == "remove" ]]; then
-    if [[ -f "$INSTALL_PREFIX/lib/pkgconfig/libomp.pc" ]]; then
-        sudo rm "$INSTALL_PREFIX/lib/pkgconfig/libomp.pc"
-    fi
-elif [[ $INSTALL_COMMAND == "install" ]]; then
-    if [[ ! -f "$INSTALL_PREFIX/lib/pkgconfig/libomp.pc" ]]; then
-        sudo tee "$INSTALL_PREFIX/lib/pkgconfig/libomp.pc" > /dev/null << EOF
-prefix=$INSTALL_PREFIX
-exec_prefix=\${prefix}
-libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
-
-Name: libomp
-Description: OpenMP Library for Apple Clang
-Version: 1.0
-Libs: -L\${libdir} -lomp
-Cflags: -I\${includedir} -Xpreprocessor -fopenmp
-EOF
-    fi
-fi
-}
 
 # Download functions
 # ==============================================================================
@@ -917,8 +516,7 @@ download_git() {
     local tag=$4
 
     if [[ $INSTALL_COMMAND == "remove" ]]; then
-        sudo_check
-        sudo rm -rf "${SOURCES_DIRECTORY}/${package}"
+        rm -rf "${SOURCES_DIRECTORY}/${package}"
         return
     fi
 
@@ -937,13 +535,12 @@ download_git() {
             print_status $package "INFO" "Updating"
             git_update_remote "$package" "${SOURCES_DIRECTORY}/${package}"
             git -C "${SOURCES_DIRECTORY}/${package}" reset --hard HEAD
-            sudo_check
-            sudo git -C "${SOURCES_DIRECTORY}/${package}" clean -xffd
+            git -C "${SOURCES_DIRECTORY}/${package}" clean -xffd
             git -C "${SOURCES_DIRECTORY}/${package}" checkout $branch
             git -C "${SOURCES_DIRECTORY}/${package}" pull
             git -C "${SOURCES_DIRECTORY}/${package}" checkout $tag
         else
-            sudo rm -rf "${SOURCES_DIRECTORY}/${package}"
+            rm -rf "${SOURCES_DIRECTORY}/${package}"
             download_git "$1" "$2" "$3" "$4"
         fi
     fi
@@ -1014,6 +611,7 @@ download_https() {
         "application/x-tar"             # .tar
         "application/x-rar"             # .rar
         "application/x-7z-compressed"   # .7z
+        "application/x-lzip"            # .lz
     )
     if [[ " ${compressed_mime_types[@]} " =~ " $(file --brief --mime-type "${SOURCES_DIRECTORY}/${filename}") " ]]; then
         if [[ ! -d "${SOURCES_DIRECTORY}/${package}" ]]; then
@@ -1058,17 +656,9 @@ install_configure() {
     local tool_options="$3"
     local source_directory="$4"
     local build_directory="$5"
+    local restore_ldflags="$LDFLAGS"
+    export LDFLAGS="$LDFLAGS -Wl,-rpath,\$\$ORIGIN/../lib"
     if [[ $INSTALL_COMMAND == "install" ]]; then
-        if [[ $package == "libtiff" ]]; then
-            print_status $package "INFO" "Patching"
-            cd "$source_directory"
-            patch_libtiff "$package" "$source_directory/local_install.patch"
-            sed -i '' "s|glibtoolize|gnulibtoolize|g" "$source_directory/autogen.sh"
-        fi
-        if [[ $package == "chafa" ]]; then
-            print_status $package "INFO" "Patching"
-            sed -i '' "s|libtoolize|gnulibtoolize|g" "$source_directory/autogen.sh"
-        fi
         print_status $package "INFO" "Configuring"
         if [[ $build_directory != "" ]]; then
             mkdir -p "$build_directory"
@@ -1077,7 +667,13 @@ install_configure() {
             build_directory="$source_directory"
             cd "$source_directory"
         fi
-        configure_options="--prefix=$INSTALL_PREFIX ${tool_options}"
+        if [[ $package == "perl" ]]; then
+            configure_options="-Dprefix=$INSTALL_PREFIX ${tool_options}"
+        elif [[ $package == *_bootstrap ]]; then
+            configure_options="--prefix=$BOOTSTRAP_PREFIX ${tool_options}"
+        else
+            configure_options="--prefix=$INSTALL_PREFIX ${tool_options}"
+        fi
         if [[ -f "${source_directory}/configure" ]]; then
             eval "${source_directory}/configure $configure_options"
         elif [[ -f "${source_directory}/Configure" ]]; then
@@ -1100,21 +696,29 @@ install_configure() {
             fi
         fi
         print_status $package "INFO" "Building"
-        make -j$CONCURRENT_JOBS
+        if command -v gnumake >/dev/null 2>&1; then
+            gnumake -j$CONCURRENT_JOBS
+        else
+            make -j$CONCURRENT_JOBS
+        fi
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        sudo_check
         if [[ $package == "john" ]]; then
-            sudo mv ../run/john $INSTALL_PREFIX/bin
-            sudo mkdir -p $INSTALL_PREFIX/share/john
-            sudo cp -a ../run/* $INSTALL_PREFIX/share/john
-            sudo mv $INSTALL_PREFIX/share/john/*.{pl,py,rb} $INSTALL_PREFIX/share/john/{relbench,benchmark-unify,mailer,makechr} $INSTALL_PREFIX/bin
+            mv ../run/john $INSTALL_PREFIX/bin
+            mkdir -p $INSTALL_PREFIX/share/john
+            cp -a ../run/* $INSTALL_PREFIX/share/john
+            mv $INSTALL_PREFIX/share/john/*.{pl,py,rb} $INSTALL_PREFIX/share/john/{relbench,benchmark-unify,mailer,makechr} $INSTALL_PREFIX/bin
         else
-            sudo make install
+            if command -v gnumake >/dev/null 2>&1; then
+                gnumake install
+            else
+                make install
+            fi
         fi
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
+    export LDFLAGS="$restore_ldflags"
 }
 
 target_exists() {
@@ -1127,6 +731,8 @@ install_make_only() {
     local custom_prefix="$2"
     local tool_options=$3
     local source_directory="$4"
+    local restore_ldflags="$LDFLAGS"
+    export LDFLAGS="$LDFLAGS -Wl,-rpath,\$\$ORIGIN/../lib"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
         cd "$source_directory"
@@ -1143,30 +749,34 @@ install_make_only() {
         fi
         if [[ -f "${source_directory}/Makefile" ]]; then
             print_status $package "WARN" "Patching"
-            sed -i '' "s|/usr/local|${INSTALL_PREFIX}${custom_prefix}|g" "$source_directory/Makefile"
-        fi
-        if [[ $package == "molten-vk" ]]; then
-            print_status $package "INFO" "Dependencies"
-            ./fetchDependencies --$tool_options
+            sed -i '' "s|/usr/local|${INSTALL_PREFIX}${custom_prefix}|g" "$source_directory/Makefile" $source_directory/*/Makefile
         fi
         print_status $package "INFO" "Building"
-        make -j$CONCURRENT_JOBS $tool_options
+        if command -v gnumake >/dev/null 2>&1; then
+            eval "gnumake -j$CONCURRENT_JOBS $tool_options"
+        else
+            eval "make -j$CONCURRENT_JOBS $tool_options"
+        fi
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
         if target_exists "install"; then
-            sudo_check
-            sudo make $tool_options install
+            if command -v gnumake >/dev/null 2>&1; then
+                eval "gnumake $tool_options install"
+            else
+                eval "make $tool_options install"
+            fi
         elif [[ $package == "hashcat" ]]; then
-            sudo mv "${source_directory}/hashcat" "$INSTALL_PREFIX/bin"
-            sudo mkdir -p $INSTALL_PREFIX/share/hashcat
-            sudo cp -a "${source_directory}/hashcat.hcstat2" $INSTALL_PREFIX/share/hashcat/
-            sudo cp -a "${source_directory}"/{bridges,charsets,docs,masks,modules,OpenCL,rules,tools,tunings} $INSTALL_PREFIX/share/hashcat/
+            mv "${source_directory}/hashcat" "$INSTALL_PREFIX/bin"
+            mkdir -p $INSTALL_PREFIX/share/hashcat
+            cp -a "${source_directory}/hashcat.hcstat2" $INSTALL_PREFIX/share/hashcat/
+            cp -a "${source_directory}"/{bridges,charsets,docs,masks,modules,OpenCL,rules,tools,tunings} $INSTALL_PREFIX/share/hashcat/
         else
             print_status $package "FAIL" "Not implemented"
         fi
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
+    export LDFLAGS="$restore_ldflags"
 }
 
 install_cmake() {
@@ -1179,7 +789,7 @@ install_cmake() {
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
         cd "$build_directory"
-        cmake_options="-Wno-dev -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DCMAKE_INSTALL_RPATH=@loader_path/../lib -DCMAKE_BUILD_TYPE=Release ${tool_options}"
+        cmake_options="-Wno-dev -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DCMAKE_INSTALL_RPATH=\"\$ORIGIN/../lib\" -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH_USE_LINK_RPATH=OFF -DCMAKE_BUILD_TYPE=Release ${tool_options}"
         if [[ $package != "ninja" ]]; then
             cmake_options="-GNinja $cmake_options"
         fi
@@ -1188,8 +798,7 @@ install_cmake() {
         cmake --build . --parallel=$CONCURRENT_JOBS
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        sudo_check
-        sudo cmake --install .
+        cmake --install .
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
@@ -1200,21 +809,23 @@ install_meson() {
     local tool_options="$2"
     local source_directory="$3"
     local build_directory="$4"
+    local restore_ldflags="$LDFLAGS"
+    export LDFLAGS="$LDFLAGS -Wl,-rpath,\$ORIGIN/../lib"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         meson_update_wraps $package "$source_directory"
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
         cd "$source_directory"
-        eval "meson setup --prefix=$INSTALL_PREFIX --buildtype release $tool_options" \"$build_directory\"
+        eval "meson setup --prefix=$INSTALL_PREFIX --buildtype release -Ddefault_library=shared $tool_options" \"$build_directory\"
         print_status $package "INFO" "Building"
         meson compile -C "$build_directory"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        sudo_check
-        sudo meson install -C "$build_directory"
+        meson install -C "$build_directory"
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
+    export LDFLAGS="$restore_ldflags"
 }
 
 install_prebuilt() {
@@ -1227,43 +838,40 @@ install_prebuilt() {
         if [[ $prebuilt_installer != "" ]]; then
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
-            sudo_check
-            sudo "${source_directory}/${prebuilt_installer}" "$installer_options"
+            "${source_directory}/${prebuilt_installer}" "$installer_options"
         elif [[ $package == "jdtls" ]]; then
             # based on AUR script
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
-            sudo_check
-            sudo mkdir -p "$INSTALL_PREFIX/share/java/jdtls"
-            sudo cp -R "${source_directory}/"config_* "${source_directory}/features" "${source_directory}/plugins" "${source_directory}/bin" "$INSTALL_PREFIX/share/java/jdtls"
-            sudo mkdir -p "$INSTALL_PREFIX/bin"
-            sudo ln -fs "$INSTALL_PREFIX/share/java/jdtls/bin/jdtls" "$INSTALL_PREFIX/bin/jdtls"
+            mkdir -p "$INSTALL_PREFIX/share/java/jdtls"
+            cp -R "${source_directory}/"config_* "${source_directory}/features" "${source_directory}/plugins" "${source_directory}/bin" "$INSTALL_PREFIX/share/java/jdtls"
+            mkdir -p "$INSTALL_PREFIX/bin"
+            ln -fs "$INSTALL_PREFIX/share/java/jdtls/bin/jdtls" "$INSTALL_PREFIX/bin/jdtls"
         elif [[ $package == "exiftool" ]]; then
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
             local PERL_CONFIG_DIR="/Library/Perl/$(perl -e 'printf "%vd", $^V' | cut -d. -f1-2)"
-            sudo cp -rPf "$source_directory/exiftool" "$INSTALL_PREFIX/bin"
-            sudo cp -rPf "$source_directory/lib/" "$PERL_CONFIG_DIR/"
+            cp -rPf "$source_directory/exiftool" "$INSTALL_PREFIX/bin"
+            cp -rPf "$source_directory/lib/" "$PERL_CONFIG_DIR/"
         else
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
-            sudo_check
             local install_dirs=(bin etc include lib libexec man sbin share)
             local install_count=0
             for install_dir in "${install_dirs[@]}"; do
                 if [[ -d "$source_directory/$install_dir" ]]; then
-                    sudo cp -rPf "$source_directory/$install_dir" "$INSTALL_PREFIX/"
+                    cp -rPf "$source_directory/$install_dir" "$INSTALL_PREFIX/"
                     install_count=1
                 fi
             done
             if [[ $package == "zig" ]]; then
-                sudo cp -Pf "$source_directory/zig" "$INSTALL_PREFIX/bin/"
+                cp -Pf "$source_directory/zig" "$INSTALL_PREFIX/bin/"
                 install_count=1
             fi
             if (( install_count == 0 )); then
                 count_files=( "$source_directory"/*(.N) )
                 if (( ${#count_files} == 1 )); then
-                    sudo cp -Pf "$count_files[1]" "$INSTALL_PREFIX/bin/"
+                    cp -Pf "$count_files[1]" "$INSTALL_PREFIX/bin/"
                 else
                     print_status $package "WARN" "Not supported"
                 fi
@@ -1276,52 +884,51 @@ install_prebuilt() {
 
 install_pip() {
     local package="$1"
+    local restore_ldflags="$LDFLAGS"
+    export LDFLAGS="$LDFLAGS -Wl,-rpath,\$ORIGIN/../lib"
     if [[ $INSTALL_COMMAND == "install" ]]; then
-        sudo_check
         if [[ $package == "pip" ]]; then
             curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-            sudo python3 get-pip.py --force-reinstall
+            python3 get-pip.py --force-reinstall
             rm get-pip.py
         fi
         if [[ $package == "cocotb" ]]; then
             echo $1 $2 $3 $4 $5
-            sudo COCOTB_IGNORE_PYTHON_REQUIRES=1 $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --no-binary :all: --upgrade "$package"
+            COCOTB_IGNORE_PYTHON_REQUIRES=1 $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --no-binary :all: --upgrade "$package"
         elif [[ $2 == "binary" ]]; then
             print_status $package "INFO" "Installing"
-            sudo $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"
+            $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"
         elif [[ $2 == "version" ]]; then
             print_status $package "INFO" "Installing"
             if [[ $4 != "" ]]; then
                 echo $1 $2 $3 $4 $5
-                sudo $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"==$3 --extra-index-url "$4"
+                $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"==$3 --extra-index-url "$4"
             else
                 echo $1 $2 $3 $4 $5
-                sudo $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"==$3
+                $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"==$3
             fi
         else
             print_status $package "INFO" "Compiling"
-            sudo -H PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --no-binary :all: --upgrade "$package"
+            PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --no-binary :all: --upgrade "$package"
         fi
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         if [[ $package != "pip" ]]; then
             print_status $package "WARN" "Uninstalling"
-            sudo_check
-            sudo -H $SCRIPT_PYTHONPATH/pip3 uninstall -y "$package" | print_status $package "WARN" "No pip"
+            $SCRIPT_PYTHONPATH/pip3 uninstall -y "$package" | print_status $package "WARN" "No pip"
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         fi
     fi
+    export LDFLAGS="$restore_ldflags"
 }
 
 install_luarocks() {
     local package="$1"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Installing"
-        sudo_check
-        sudo $INSTALL_PREFIX/bin/luarocks install "$package"
+        $INSTALL_PREFIX/bin/luarocks install "$package"
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         print_status $package "WARN" "Uninstalling"
-        sudo_check
-        sudo $INSTALL_PREFIX/bin/luarocks uninstall "$package"
+        $INSTALL_PREFIX/bin/luarocks uninstall "$package"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
 }
@@ -1333,11 +940,6 @@ install_cargo() {
     local source_directory="$4"
     local build_directory="$5"
     if [[ $INSTALL_COMMAND == "install" ]]; then
-        if [[ $package == "vhdl_ls" ]]; then
-            print_status $package "INFO" "Patching"
-            cd "$source_directory"
-            patch_vhdl_ls "$package" "$source_directory/local_install.patch"
-        fi
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
         cd "$build_directory"
@@ -1345,16 +947,13 @@ install_cargo() {
         cargo build --release --manifest-path "$source_directory/Cargo.toml"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        sudo_check
-        sudo cargo install --force --path "$source_directory$source_path" --root $INSTALL_PREFIX
+        cargo install --force --path "$source_directory$source_path" --root $INSTALL_PREFIX
         if [[ $package == "helix" ]]; then
             rm -rf "$source_directory/runtime/grammars/sources/"
-            sudo_check
-            sudo cp -rPf $source_directory/runtime $INSTALL_PREFIX/libexec/helix/
+            cp -rPf $source_directory/runtime $INSTALL_PREFIX/libexec/helix/
         elif [[ $package == "vhdl_ls" ]]; then
-            sudo_check
-            sudo mkdir -p $INSTALL_PREFIX/lib/rust_hdl/
-            sudo cp -rPf $source_directory/vhdl_libraries $INSTALL_PREFIX/lib/rust_hdl/vhdl_libraries
+            mkdir -p $INSTALL_PREFIX/lib/rust_hdl/
+            cp -rPf $source_directory/vhdl_libraries $INSTALL_PREFIX/lib/rust_hdl/vhdl_libraries
         fi
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
@@ -1375,8 +974,7 @@ install_zig() {
         zig build -Doptimize=ReleaseFast --build-file "$source_directory/build.zig" --cache-dir "$build_directory/zig-cache"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        sudo_check
-        sudo zig build -Doptimize=ReleaseFast  --build-file "$source_directory/build.zig"  --cache-dir "$build_directory/zig-cache" install -p "$INSTALL_PREFIX"
+        zig build -Doptimize=ReleaseFast  --build-file "$source_directory/build.zig"  --cache-dir "$build_directory/zig-cache" install -p "$INSTALL_PREFIX"
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
@@ -1385,13 +983,15 @@ install_zig() {
 install_npm() {
     local package="$1"
     if [[ $INSTALL_COMMAND == "install" ]]; then
-        sudo_check
-        print_status $package "INFO" "Installing"
-        sudo deno install --global --allow-all --name $package --root "$INSTALL_PREFIX" npm:$2
+        if command -v deno >/dev/null 2>&1; then
+            print_status $package "INFO" "Installing"
+            deno install --global --allow-all --name $package --root "$INSTALL_PREFIX" npm:$2
+        fi
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         print_status $package "WARN" "Uninstalling"
-        sudo_check
-        sudo deno uninstall --root "$INSTALL_PREFIX" $package
+        if command -v deno >/dev/null 2>&1; then
+            deno uninstall --root "$INSTALL_PREFIX" $package
+        fi
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
 }
@@ -1403,7 +1003,7 @@ install_custom_x265() {
 
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
-        cmake_options="-Wno-dev -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DCMAKE_INSTALL_RPATH=@loader_path/../lib -DCMAKE_BUILD_TYPE=Release"
+        cmake_options="-Wno-dev -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib -DCMAKE_BUILD_TYPE=Release"
 
         mkdir -p "$build_directory/main12"
         cd "$build_directory/main12"
@@ -1433,8 +1033,7 @@ install_custom_x265() {
 
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        sudo_check
-        sudo cmake --install .
+        cmake --install .
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
@@ -1444,39 +1043,12 @@ install_custom_depot_tools() {
     print_status $package "INFO" "No install"
 }
 
-install_custom_angle() {
-    local package="$1"
-    local source_directory="$2"
-    local build_directory="$3"
-    if [[ $INSTALL_COMMAND == "install" ]]; then
-        print_status $package "INFO" "Initializing"
-        if [[ -f "$source_directory/angle" ]]; then
-            sudo rm -rf "$source_directory/angle"
-        fi
-        mkdir -p "$source_directory/angle"
-        cd "$source_directory/angle"
-        print_status $package "INFO" "Fetching"
-        fetch angle || gclient sync
-        print_status $package "INFO" "Configuring"
-        gn gen --args=is_debug=false --args=use_siso=false $build_directory/Release
-        print_status $package "INFO" "Building"
-        autoninja -C $build_directory/Release
-        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
-        print_status $package "INFO" "Installing"
-        sudo_check
-        sudo cp $build_directory/Release/*.dylib "$INSTALL_PREFIX/lib/"
-        sudo cp -r include/* "$INSTALL_PREFIX/include"
-    elif [[ $INSTALL_COMMAND == "remove" ]]; then
-        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
-    fi
-}
-
 install_package() {
     local package=$1
     local skip_time=$SKIPTIME
     # package-name, kind, alternative/alt-options, config-options, source-directory, download-command, url, filename/branch, etag (https), strip (https-extract), tag
     # for install_pip 5=extra url (source_directory must not be used)
-    local source_directory="${SOURCES_DIRECTORY}/${package}${5}"
+    local source_directory="${SOURCES_DIRECTORY}/${package%_bootstrap}${5}"
     local build_directory="${BUILDS_DIRECTORY}/${package}"
 
     if [[ -f "$MANIFEST_DIRECTORY/${package}.pre-manifest" ]]; then
@@ -1498,19 +1070,10 @@ install_package() {
     fi
 
     if (( $(( $(date +%s) - last_completion )) > $skip_time )); then
-        if [[ $package == "cpython" ]]; then
-            {
-                find "$INSTALL_PREFIX" -type f 2>/dev/null
-                find "/Library/Frameworks/Python.framework" -type f 2>/dev/null
-                find "/Applications/Python"* -type f 2>/dev/null
-            } | sort -u > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
-        else
-            find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
-        fi
+        find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
         download "$package" "$6" "$7" "$8" "$9" "$10" "$11"
         pre_patch "$package" "$source_directory"
-        sudo_check
-        if [[ -d "$build_directory" ]]; then sudo rm -rf $build_directory; fi
+        if [[ -d "$build_directory" ]]; then rm -rf $build_directory; fi
         case "$2" in
             configure)
                 install_configure "$package" "$3" "$4" "$source_directory" "$build_directory"
@@ -1555,15 +1118,7 @@ install_package() {
         esac
         if [[ $INSTALL_COMMAND != "remove" ]]; then
             print_status $package "INFO" "Manifesting"
-            if [[ $package == "cpython" ]]; then
-                {
-                    find "$INSTALL_PREFIX" -type f 2>/dev/null
-                    find "/Library/Frameworks/Python.framework" -type f 2>/dev/null
-                    find "/Applications/Python"* -type f 2>/dev/null
-                } | sort -u > "$MANIFEST_DIRECTORY/$package.post-manifest"
-            else
-                find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/$package.post-manifest"
-            fi
+            find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/$package.post-manifest"
             comm -13 "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest" >> "$MANIFEST_DIRECTORY/$package.manifest"
             rm "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest"
             if [[ $CREATE_XZ == ON ]]; then
@@ -1595,9 +1150,8 @@ install_certs() {
         /usr/bin/security export -k /System/Library/Keychains/SystemRootCertificates.keychain -t certs -p  > "$source_directory/keychain_root_certs.pem"
         print_status $package "INFO" "Installing"
         find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
-        sudo_check
-        sudo mkdir -p "$INSTALL_CERTS_DIRECTORY"
-        sudo cp "$source_directory/keychain_root_certs.pem" "$INSTALL_ROOT_CERTS"
+        mkdir -p "$INSTALL_CERTS_DIRECTORY"
+        cp "$source_directory/keychain_root_certs.pem" "$INSTALL_ROOT_CERTS"
         print_status $package "INFO" "Manifesting"
         find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/$package.post-manifest"
         comm -13 "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest" >> "$MANIFEST_DIRECTORY/$package.manifest"
@@ -1666,19 +1220,6 @@ pre_patch() {
     if [[ $INSTALL_COMMAND == "install" ]]; then
         local patch_required=false
         local packages=(
-            "libyuv" \
-            "libjxl" \
-            "graphite2" \
-            "libogg" \
-            "libvorbis" \
-            "portaudio" \
-            "libqrencode" \
-            "soxr" \
-            "snappy" \
-            "libtorch" \
-            "chromaprint" \
-            "vid.stab" \
-            "libzmq" \
         )
         if [[ " ${packages[@]} " =~ " ${package} " ]]; then
             patch_required=true
@@ -1688,24 +1229,6 @@ pre_patch() {
             local regex_sed='s/(CMAKE_MINIMUM_REQUIRED[[:space:]]*\([[:space:]]*VERSION[[:space:]]*)(")?(2\.[0-9.]+|3\.0)(")?/\13.5/I'
             local cmake_paths=(
                 "" \
-                "src/" \
-                "tests/" \
-                "tests/bittwiddling/" \
-                "tests/json/" \
-                "tests/sparsetest/" \
-                "tests/utftest/" \
-                "unittests/" \
-                "gr2fonttest/" \
-                "third_party/sjpeg/" \
-                "third_party/protobuf/cmake/" \
-                "third_party/psimd/" \
-                "third_party/FP16/" \
-                "third_party/NNPACK/" \
-                "third_party/tensorpipe/third_party/libuv/" \
-                "third_party/gloo/" \
-                "android/pytorch_android/" \
-                "test/edge/" \
-                "dynamicHDR10/" \
             )
             for cmake_path in "${cmake_paths[@]}"; do
                 if [[ -f "$source_directory/${cmake_path}CMakeLists.txt" ]]; then
@@ -1719,32 +1242,10 @@ pre_patch() {
                 print_status $package "INFO" "Patching"
                 sed -i '' "s|\[unreleased\]|$(date '+%Y-%m-%d') \(No release\)|g" "${2}/include/curl/curlver.h"
                 ;;
-            lame)
-                print_status $package "INFO" "Patching"
-                sed -i '' "/lame_init_old/d" "${2}/include/libmp3lame.sym"
-                curl -sOL https://tmkk.undo.jp/lame/lame-3.100-neon-20230418.diff
-                patch -ruN -d ${2} < lame-3.100-neon-20230418.diff
-                ;;
             flite)
                 print_status $package "INFO" "Patching"
                 sed -i '' "s|/proc/cpuinfo|/dev/null|g" "${2}/configure"
                 sed -i '' "s|/proc/cpuinfo|/dev/null|g" "${2}/configure.in"
-                ;;
-            ffmpeg)
-                print_status $package "INFO" "Patching"
-                cd "$source_directory"
-                patch_ffmpeg "$package" "$source_directory/local_install.patch"
-                # patch_ffmpeg_metal "$package" "$source_directory/local_install.patch"
-                ;;
-            x265)
-                print_status $package "INFO" "Patching"
-                cd "$source_directory"
-                patch_x265 "$package" "$source_directory/local_install.patch"
-                ;;
-            flex)
-                print_status $package "INFO" "Patching"
-                curl -sOL https://raw.githubusercontent.com/Homebrew/formula-patches/03cf8088210822aa2c1ab544ed58ea04c897d9c4/libtool/configure-big_sur.diff
-                patch -ruN -d ${2} < configure-big_sur.diff
                 ;;
             snort)
                 print_status $package "INFO" "Patching"
@@ -1754,16 +1255,6 @@ pre_patch() {
                 print_status $package "INFO" "Patching"
                 curl -sOL https://github.com/VectorCamp/vectorscan/commit/d9ebb20010b3f90a7a5c7bf4a5edff2eb58f2a4f.patch
                 patch -ruN -d ${2} < d9ebb20010b3f90a7a5c7bf4a5edff2eb58f2a4f.patch
-                ;;
-            bochs)
-                print_status $package "INFO" "Patching"
-                cd "$source_directory"
-                patch_bochs "$package" "$source_directory/local_install.patch"
-                ;;
-            mdcat)
-                print_status $package "INFO" "Patching"
-                cd "$source_directory"
-                patch_mdcat "$package" "$source_directory/local_install.patch"
                 ;;
             libepoxy)
                 print_status $package "INFO" "Patching"
@@ -1777,6 +1268,15 @@ pre_patch() {
                 sed -i '' 's/#define JOHN_SYSTEMWIDE_EXEC.*/#define JOHN_SYSTEMWIDE_EXEC $INSTALL_PREFIX\/bin/g' "$source_directory/params.h"
                 sed -i '' 's/#define JOHN_SYSTEMWIDE_HOME.*/#define JOHN_SYSTEMWIDE_HOME $INSTALL_PREFIX\/share\/john/g' "$source_directory/params.h"
                 ;;
+            krb5)
+                sed -i '' 's/freebsd\*)/freebsd* | *-*-dragonfly*)/g' "$source_directory/config/shlib.conf"
+                perl -i -pe 'print "#include <sys/socket.h>\n" if $. == 1' "$source_directory/include/gssrpc/rpc.h"
+                sed -i '' 's/ENODATA/ENOATTR/g' "$source_directory/lib/krad/packet.c"
+                ;;
+            openldap)
+                sed -i '' 's/X509 \*cert = OSSL_STORE_INFO_get0_CERT/;\n            X509 *cert = OSSL_STORE_INFO_get0_CERT/g' "$source_directory/libraries/libldap/tls_o.c"
+                sed -i '' 's/X509_STORE \*store = SSL_CTX_get_cert_store/;\n            X509_STORE *store = SSL_CTX_get_cert_store/g' "$source_directory/libraries/libldap/tls_o.c"
+                sed -i '' 's/X509_STORE \*x509_s = SSL_CTX_get_cert_store/;\n            X509_STORE *x509_s = SSL_CTX_get_cert_store/g' "$source_directory/libraries/libldap/tls_o.c"
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
@@ -1788,43 +1288,61 @@ pre_patch() {
 
 # after install
 post_patch() {
-    sudo_check
     if [[ $INSTALL_COMMAND == "install" ]]; then
         case "$1" in
             pkgconf)
                 print_status $package "INFO" "Sym-linking"
-                sudo ln -sf $INSTALL_PREFIX/bin/pkgconf $INSTALL_PREFIX/bin/pkg-config
-                sudo ln -sf $INSTALL_PREFIX/share/man/man1/pkgconf $INSTALL_PREFIX/share/man/man1/pkg-config.1
+                ln -sf $INSTALL_PREFIX/bin/pkgconf $INSTALL_PREFIX/bin/pkg-config
+                ln -sf $INSTALL_PREFIX/share/man/man1/pkgconf $INSTALL_PREFIX/share/man/man1/pkg-config.1
                 ;;
             gnufortran)
                 print_status $package "INFO" "Sym-linking"
-                sudo ln -sf $INSTALL_PREFIX/bin/gnufortran $INSTALL_PREFIX/bin/gfortran
-                ;;
-            cpython)
+                ln -sf $INSTALL_PREFIX/bin/gnufortran $INSTALL_PREFIX/bin/gfortran
                 ;;
             pocketsphinx)
-                sudo cp $INSTALL_PREFIX/include/pocketsphinx.h $INSTALL_PREFIX/include/pocketsphinx/
+                cp $INSTALL_PREFIX/include/pocketsphinx.h $INSTALL_PREFIX/include/pocketsphinx/
                 ;;
             webp)
-                sudo sed -i '' 's/Libs: -L${libdir} -lwebp/Libs: -L${libdir} -lwebp -lsharpyuv/' $INSTALL_PREFIX/lib/pkgconfig/libwebp.pc
+                sed -i '' 's/Libs: -L${libdir} -lwebp/Libs: -L${libdir} -lwebp -lsharpyuv/' $INSTALL_PREFIX/lib/pkgconfig/libwebp.pc
                 ;;
             ffmpeg)
-                sudo install_name_tool -change "bin/libopenmpt.so" "@rpath/libopenmpt.so" $INSTALL_PREFIX/bin/ffmpeg
-                sudo install_name_tool -change "bin/libopenmpt.so" "@rpath/libopenmpt.so" $INSTALL_PREFIX/bin/ffprobe
-                sudo sed -i '' 's/-Wl,-framework -Wl,/-framework /g' $INSTALL_PREFIX/lib/pkgconfig/libav*.pc $INSTALL_PREFIX/lib/pkgconfig/libsw*.pc
-                sudo sed -i '' 's/-Wl,-framework,/-framework /g' $INSTALL_PREFIX/lib/pkgconfig/libav*.pc $INSTALL_PREFIX/lib/pkgconfig/libsw*.pc
+                sed -i '' 's/-Wl,-framework -Wl,/-framework /g' $INSTALL_PREFIX/lib/pkgconfig/libav*.pc $INSTALL_PREFIX/lib/pkgconfig/libsw*.pc
+                sed -i '' 's/-Wl,-framework,/-framework /g' $INSTALL_PREFIX/lib/pkgconfig/libav*.pc $INSTALL_PREFIX/lib/pkgconfig/libsw*.pc
                 ;;
             zsh-autosuggestions)
-                sudo mkdir -p "$INSTALL_PREFIX/share/zsh-autosuggestions"
-                sudo cp -f "$source_directory/zsh-autosuggestions.zsh" "$INSTALL_PREFIX/share/zsh-autosuggestions/"
-		;;
+                mkdir -p "$INSTALL_PREFIX/share/zsh-autosuggestions"
+                cp -f "$source_directory/zsh-autosuggestions.zsh" "$INSTALL_PREFIX/share/zsh-autosuggestions/"
+                ;;
+            ncurses)
+                cd "$INSTALL_PREFIX/lib"
+                for lib in ncurses form panel menu; do
+                    if [[ -f "lib${lib}w.so" ]] && [[ ! -f "lib${lib}.so" ]]; then
+                        ln -sf "lib${lib}w.so" "lib${lib}.so"
+                    fi
+                    if [[ -f "lib${lib}w.a" ]] && [[ ! -f "lib${lib}.a" ]]; then
+                        ln -sf "lib${lib}w.a" "lib${lib}.a"
+                    fi
+                done
+                cd "pkgconfig"
+                for pc in ncurses form panel menu; do
+                    if [[ -f "${pc}w.pc" ]] && [[ ! -f "${pc}.pc" ]]; then
+                        ln -sf "${pc}w.pc" "${pc}.pc"
+                    fi
+                done
+                if [[ ! -f "curses.pc" ]]; then
+                    ln -sf "ncursesw.pc" "curses.pc"
+                fi
+                if [[ -d "$INSTALL_PREFIX/include/ncursesw" ]] && [[ ! -d "$INSTALL_PREFIX/include/ncurses" ]]; then
+                    ln -sf "ncursesw" "$INSTALL_PREFIX/include/ncurses"
+                fi
+                ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
             pkgconf)
                 print_status $package "INFO" "Remove symlinks"
-                sudo rm -f $INSTALL_PREFIX/bin/pkg-config
-                sudo rm -f $INSTALL_PREFIX/share/man/man1/pkg-config.1
+                rm -f $INSTALL_PREFIX/bin/pkg-config
+                rm -f $INSTALL_PREFIX/share/man/man1/pkg-config.1
                 ;;
         esac
     fi
@@ -1841,19 +1359,16 @@ main() {
         uninstall_manifested $INSTALL_SINGLE_TOOL "$MANIFEST_DIRECTORY/${INSTALL_SINGLE_TOOL}.manifest"
         spinner off
     else
-        sudo_check
         # TODO use external file (csv or similar for all packages)
         # 1-package 2-kind 3-alternative 4-options 5-source_location 6-download_kind 7-url 8-filename/branchname 9-use_etag 10-strip_extract
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
-        export LDXXFLAGS="-Wl,-rpath,@loader_path/../lib"
+        export CFLAGS="-O3 -I$INSTALL_PREFIX/include ${CFLAGS:-}"
+        export CXXFLAGS="${CFLAGS:-}"
+        export CPPFLAGS="-I$INSTALL_PREFIX/include ${CPPFLAGS:-}"
+        export LDFLAGS="-L$INSTALL_PREFIX/lib ${LDFLAGS:-}"
+        export LDXXFLAGS="${LDFLAGS:-}"
+        # export LD_LIBRARY_PATH="$INSTALL_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         export JAVA_HOME=$(java -XshowSettings:properties -version 2>&1 > /dev/null | grep 'java.home' | awk '{print $3}')
-        export RUSTFLAGS="-C opt-level=3 -C debuginfo=0 -C rpath=true"
-
-        # ensure we have metal
-        if [[ $INSTALL_COMMAND == "install" ]]; then
-            xcodebuild -downloadComponent MetalToolchain
-            sudo xcodebuild -downloadComponent MetalToolchain
-        fi
+        export RUSTFLAGS="-C opt-level=3 -C debuginfo=0 -C rpath=true -C link-arg=-Wl,-rpath,\$ORIGIN/../lib"
 
         # m4 (builtin old) -
         install_package "m4" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/m4/" "m4-latest.tar.xz" "YES" "YES"
@@ -1861,23 +1376,54 @@ main() {
         # bison (versioned) - m4
         install_package "bison" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/bison/" "bison-3.8.2.tar.xz" "YES" "YES"
 
-        # libtool (versioned, builtin different) - m4
-        install_package "gnulibtool" "configure" "" "--program-prefix=gnu --enable-ltdl-install" "" "https" "https://ftp.gnu.org/gnu/libtool/" "libtool-2.5.4.tar.xz" "YES" "YES"
-        export LIBTOOLIZE="gnulibtoolize"
+        # libtool (versioned) - m4
+        install_package "libtool" "configure" "" "--enable-ltdl-install" "" "https" "https://ftp.gnu.org/gnu/libtool/" "libtool-2.5.4.tar.xz" "YES" "YES"
 
-        # autoconf - m4, perl (builtin)
+        # perl (versioned)
+        install_package "perl" "configure_in_source" "" "-des" "" "https" "https://www.cpan.org/src/5.0/" "perl-5.42.0.tar.gz" "YES" "YES"
+
+        # autoconf - m4, perl
         install_package "autoconf" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/autoconf/" "autoconf-latest.tar.xz" "YES" "YES"
 
         # automake (versioned) - autoconf
         install_package "automake" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/automake/" "automake-1.18.1.tar.xz" "YES" "YES"
 
         # pkgconf - (autoconf, automake, libtool) or meson
-        install_package "pkgconf" "configure" "./autogen.sh" "--with-system-libdir=/usr/lib:${SDK_PATH}/usr/lib --with-system-includedir=/usr/include:${SDK_PATH}/usr/include" "" "git" "https://github.com/pkgconf/pkgconf.git" "master" "YES" "YES" "pkgconf-2.3.0"
-        install_pkg_zlib
-        install_pkg_xml2
-        install_pkg_lffi
-        install_pkg_ncurses
-        install_pkg_ncursesw
+        install_package "pkgconf" "configure" "./autogen.sh" "--with-system-libdir=/usr/lib --with-system-includedir=/usr/include" "" "git" "https://github.com/pkgconf/pkgconf.git" "master" "YES" "YES" "pkgconf-2.3.0"
+        install_builtin_pc
+        export PKG_CONFIG_PATH="$INSTALL_PREFIX/lib/pkgconfig:$INSTALL_PREFIX/share/pkgconfig"
+        export PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1
+        export PKG_CONFIG_ALLOW_SYSTEM_LIBS=1
+
+        # gnumake (versioned)
+        install_package "gnumake" "configure" "" "--program-prefix=gnu" "" "https" "https://ftp.gnu.org/gnu/make/" "make-4.4.1.tar.lz" "YES" "YES"
+
+        # ncurses (versioned) - reinstall because of old version included
+        install_package "ncurses" "configure" "" \
+            " \
+                --with-shared \
+                --with-cxx-shared \
+                --enable-widec \
+                --enable-pc-files \
+                --with-pkg-config-libdir=$INSTALL_PREFIX/lib/pkgconfig \
+                --without-debug \
+                --enable-symlinks \
+            " "" "https" "https://ftp.gnu.org/gnu/ncurses/" "ncurses-6.6.tar.gz" "YES" "YES"
+
+        # cpython_bootstrap (required for llvm, nice for ninja and cmake) -
+        install_package "cpython_bootstrap" "configure" "" \
+            " \
+                --disable-shared \
+                --disable-ipv6 \
+                --without-ensurepip \
+                --without-cxx-main \
+                --without-readline \
+                --without-ssl \
+                --without-dbm \
+                --without-sqlite3 \
+            " "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES" "3.14"
+
+        export SCRIPT_PYTHONPATH="$BOOTSTRAP_PREFIX/bin"
 
         # libunistring -
         export am_cv_func_iconv_works=yes
@@ -1895,30 +1441,103 @@ main() {
         # gdbm -
         install_package "gdbm" "configure_in_source" "./autogen.sh" "--enable-libgdbm-compat --without-readline" "" "git" "https://git.savannah.gnu.org/git/gdbm.git" "master" "YES" "YES"
 
-        # cmake - bz2 (builtin), zlib (builtin), curl (builtin), ncurses (builtin), sphinx (defer)
-        install_package "cmake" "configure" "./bootstrap" "--parallel=$CONCURRENT_JOBS --system-zlib --system-bzip2 --system-curl -- -DCMake_BUILD_LTO=ON -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -Wno-dev" "" "git" "https://gitlab.kitware.com/cmake/cmake.git" "release" "YES" "YES"
+        # libuv
+        install_package "libuv" "configure" "./autogen.sh" "--disable-static" "" "git" "https://github.com/libuv/libuv.git" "v1.x" "YES" "YES"
 
-        # ninja - python (builtin), cmake
+        # cmake - bz2 (builtin), zlib (builtin), curl (builtin), ncurses (builtin), sphinx (defer)
+        install_package "cmake" "configure" "./bootstrap" "--parallel=$CONCURRENT_JOBS --system-zlib --system-bzip2 --system-curl --system-libarchive --system-libuv --bootstrap-system-libuv -- -DCMake_BUILD_LTO=ON -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -Wno-dev" "" "git" "https://gitlab.kitware.com/cmake/cmake.git" "release" "YES" "YES"
+
+        # ninja - python, cmake
         install_package "ninja" "cmake" "" "-DBUILD_TESTING=OFF" "" "git" "https://github.com/ninja-build/ninja.git" "release" "YES" "YES"
 
-        # openmp (versioned) – manually creates a pkgconfig pc file to support the clang compiler
-        install_package "openmp" "prebuilt" "" "" "/local" "https" "https://mac.r-project.org/openmp/" "openmp-19.1.0-darwin20-Release.tar.gz" "YES" "YES"
-        install_pkg_libomp
+        # llvm_bootstrap - python
+        install_package "llvm_bootstrap" "cmake" "" \
+            " \
+                -DLLVM_ENABLE_PROJECTS='clang;lld' \
+                -DLLVM_TARGETS_TO_BUILD='X86' \
+            " "" "git" "https://github.com/llvm/llvm-project.git" "release/21.x" "YES" "YES"
+
+        export CC="$BOOTSTRAP_PREFIX/bin/clang"
+        export CXX="$BOOTSTRAP_PREFIX/bin/clang++"
+        export LD="$BOOTSTRAP_PREFIX/bin/ld.lld"
+        export AR="$BOOTSTRAP_PREFIX/bin/llvm-ar"
+        export NM="$BOOTSTRAP_PREFIX/bin/llvm-nm"
+        export RANLIB="$BOOTSTRAP_PREFIX/bin/llvm-ranlib"
+
+        # llvm - python, llvm_bootstrap
+        install_package "llvm" "cmake" "" \
+            " \
+                -DLLVM_ENABLE_PROJECTS='bolt;clang;clang-tools-extra;cross-project-tests;flang;libc;libclc;lld;lldb;mlir;openmp;polly' \
+                -DLLVM_ENABLE_RUNTIMES='compiler-rt;flang-rt;libcxx;libcxxabi;libunwind' \
+                -DLLVM_TARGETS_TO_BUILD='X86' \
+                -DLLVM_ENABLE_LTO=Thin \
+                -DLLVM_PARALLEL_LINK_JOBS=2 \
+                -DLLVM_POLLY_LINK_INTO_TOOLS=ON \
+                -DLLVM_BUILD_EXTERNAL_COMPILER_RT=ON \
+                -DLLVM_LINK_LLVM_DYLIB=ON \
+                -DLLVM_ENABLE_EH=OFF \
+                -DLLVM_ENABLE_FFI=ON \
+                -DLLVM_ENABLE_RTTI=ON \
+                -DLLVM_INCLUDE_DOCS=OFF \
+                -DLLVM_INCLUDE_TESTS=OFF \
+                -DLLVM_INSTALL_UTILS=ON \
+                -DLLVM_ENABLE_Z3_SOLVER=ON \
+                -DLLVM_OPTIMIZED_TABLEGEN=ON \
+                -DLLVM_USE_LINKER=lld \
+                -DLLVM_USE_RELATIVE_PATHS_IN_FILES=ON \
+                -DLLDB_USE_SYSTEM_DEBUGSERVER=ON \
+                -DLLDB_ENABLE_PYTHON=ON \
+                -DLLDB_ENABLE_LUA=OFF \
+                -DLLDB_ENABLE_LZMA=ON \
+                -DLIBOMP_INSTALL_ALIASES=OFF \
+                -DLIBCXX_INSTALL_MODULES=ON \
+                -DLIBCXX_ENABLE_STATIC_ABI_LIBRARY=ON \
+                -DLIBCXX_STATICALLY_LINK_ABI_IN_SHARED_LIBRARY=OFF \
+                -DLIBCXX_STATICALLY_LINK_ABI_IN_STATIC_LIBRARY=ON \
+                -DLIBCXX_USE_COMPILER_RT=ON \
+                -DLIBCXX_HAS_ATOMIC_LIB=OFF \
+                -DLIBCXXABI_ENABLE_STATIC_UNWINDER=ON \
+                -DLIBCXXABI_STATICALLY_LINK_UNWINDER_IN_SHARED_LIBRARY=OFF \
+                -DLIBCXXABI_STATICALLY_LINK_UNWINDER_IN_STATIC_LIBRARY=ON \
+                -DLIBCXXABI_USE_COMPILER_RT=ON \
+                -DLIBCXXABI_USE_LLVM_UNWINDER=ON \
+                -DLIBUNWIND_USE_COMPILER_RT=ON \
+                -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON \
+                -DCOMPILER_RT_USE_LLVM_UNWINDER=ON \
+                -DCLANG_FORCE_MATCHING_LIBCLANG_SOVERSION=OFF \
+                -DCLANG_DEFAULT_CXX_STDLIB=libstdc++ \
+                -DCLANG_DEFAULT_LINKER=lld \
+                -DCMAKE_C_COMPILER=$BOOTSTRAP_PREFIX/bin/clang \
+                -DCMAKE_CXX_COMPILER=$BOOTSTRAP_PREFIX/bin/clang++ \
+                -DCMAKE_RANLIB=$BOOTSTRAP_PREFIX/bin/llvm-ranlib \
+                -DCMAKE_AR=$BOOTSTRAP_PREFIX/bin/llvm-ar \
+                -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+                -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON \
+                -DSANITIZER_CXX_ABI=libc++ \
+                -DSANITIZER_TEST_CXX=libc++ \
+            " "" "git" "https://github.com/llvm/llvm-project.git" "release/21.x" "YES" "YES"
+
+        export CC="$INSTALL_PREFIX/bin/clang"
+        export CXX="$INSTALL_PREFIX/bin/clang++"
+        export LD="$INSTALL_PREFIX/bin/ld.lld"
+        export AR="$INSTALL_PREFIX/bin/llvm-ar"
+        export NM="$INSTALL_PREFIX/bin/llvm-nm"
+        export RANLIB="$INSTALL_PREFIX/bin/llvm-ranlib"
+        export LDFLAGS="$LDFLAGS -fuse-ld=lld"
+        export CFLAGS="$CFLAGS -flto=thin"
+        export CXXFLAGS="$CXXFLAGS -flto=thin"
 
         # libtommath - cmake, libtool
         install_package "libtommath" "cmake" "" "" "" "git" "https://github.com/libtom/libtommath.git" "develop" "YES" "YES"
 
-        # pcre2 - python (builtin), zlib (builtin), pcre2
+        # pcre2 - python, zlib (builtin), pcre2
         install_package "pcre2" "cmake" "" "" "" "git" "https://github.com/PCRE2Project/pcre2.git" "main" "YES" "YES"
 
-        # swig - python (builtin), zlib (builtin), pcre2, bison
+        # swig - python, zlib (builtin), pcre2, bison
         install_package "swig" "cmake" "" "-DPCRE2_INCLUDE_DIRS=\"$INSTALL_PREFIX/include\"" "" "git" "https://github.com/swig/swig.git" "master" "YES" "YES"
 
         # xz - cmake, gettext (defer)
         install_package "xz" "cmake" "" "" "" "git" "https://github.com/tukaani-project/xz.git" "master" "YES" "YES"
-
-        # z3 - cmake, python (builtin), gmp (defer)
-        install_package "z3" "cmake" "" "-DZ3_BUILD_PYTHON_BINDINGS=TRUE -DZ3_INSTALL_PYTHON_BINDINGS=TRUE -DZ3_BUILD_JAVA_BINDINGS=TRUE -DZ3_INSTALL_JAVA_BINDINGS=TRUE" "" "git" "https://github.com/Z3Prover/z3.git" "master" "YES" "YES"
 
         # lz4 -
         install_package "lz4" "make_only" "" "" "" "git" "https://github.com/lz4/lz4.git" "dev" "YES" "YES"
@@ -1929,11 +1548,8 @@ main() {
         # brotli - cmake
         install_package "brotli" "cmake" "" "" "" "git" "https://github.com/google/brotli.git" "master" "YES" "YES"
 
-        # acquire certs
-        install_certs
-
         # openssl (versioned, v4 not compatible with rust crate) - brotli, certs
-        install_package "openssl" "configure" "" "--openssldir=$INSTALL_PREFIX/etc/ssl darwin64-arm64-cc enable-ec_nistp_64_gcc_128" "" "git" "https://github.com/openssl/openssl.git" "master" "YES" "YES" "openssl-3.5"
+        install_package "openssl" "configure" "" "--openssldir=$INSTALL_PREFIX/etc/ssl BSD-x86_64" "" "git" "https://github.com/openssl/openssl.git" "master" "YES" "YES" "openssl-3.5"
 
         # nghttp2 - cmake
         install_package "nghttp2" "cmake" "" "" "" "git" "https://github.com/nghttp2/nghttp2.git" "master" "YES" "YES"
@@ -1945,32 +1561,33 @@ main() {
         install_package "libssh2" "cmake" "" "" "" "git" "https://github.com/libssh2/libssh2.git" "master" "YES" "YES"
 
         # rtmpdump - openssl, zlib
-        install_package "rtmpdump" "make_only" "" "SYS=darwin" "" "git" "https://git.ffmpeg.org/rtmpdump.git" "master" "YES" "YES"
+        install_package "rtmpdump" "make_only" "" "SYS=posix XLDFLAGS=\"$LDFLAGS\" XCFLAGS=\"$CFLAGS\"" "" "git" "https://git.ffmpeg.org/rtmpdump.git" "master" "YES" "YES"
 
-        # curl - pkgconf, brotli, nghttp2, nghttp3, psl (deferred), libssh2, openssl, rtmpdump, zstd, krb5 (mac), openldap (mac), zlib (mac)
-        # We cannot use Secure Transport with QUIC and HTTP/3, and it is also deprecated
-        # --with-openssl --with-openssl-quic --without-libpsl --with-gssapi --with-apple-idn
-        install_package "curl" \
-                        "cmake" "" \
+        # krb5
+        install_package "krb5" "configure" "" "LDFLAGS=\"-L$INSTALL_PREFIX/lib\"" "/src" "git" "https://github.com/krb5/krb5.git" "master" "YES" "YES"
+
+        # openldap
+        install_package "openldap" "configure" "" "--disable-slapd CFLAGS=\"-std=gnu99 -I$INSTALL_PREFIX/include\"" "" "git" "https://git.openldap.org/openldap/openldap.git" "master" "YES" "YES"
+
+        # curl - pkgconf, brotli, nghttp2, nghttp3, psl (deferred), libssh2, openssl, rtmpdump, zstd, zlib
+        install_package "curl" "cmake" "" \
                         " \
                             -DCURL_USE_OPENSSL=ON \
                             -DCURL_USE_LIBPSL=OFF \
                             -DCURL_USE_GSSAPI=ON \
                             -DCURL_LTO=ON \
                             -DUSE_OPENSSL_QUIC=ON \
-                            -DUSE_APPLE_IDN=ON \
                             -DCURL_CA_BUNDLE=$INSTALL_ROOT_CERTS \
-                            -DCMAKE_OSX_SYSROOT=$SDK_PATH \
+                            -DUSE_LIBIDN2=ON \
+                            -DBUILD_SHARED_LIBS=ON \
                         " \
-                        "" "git" "https://github.com/curl/curl.git" "master" "YES" "YES" # "curl-8_11_1"
+                        "" "git" "https://github.com/curl/curl.git" "master" "YES" "YES"
 
         # gnu-nano
         install_package "nano" "configure" "./autogen.sh" "--enable-color -enable-extra --enable-multibuffer --enable-nanorc --enable-utf8" "" "git" "git://git.savannah.gnu.org/nano.git" "master" "YES" "YES"
 
         # ne - nice editor
-        export LDFLAGS=""
         install_package "ne" "make_only" "" "build" "" "git" "https://github.com/vigna/ne.git" "master" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # tcl (versioned) - openssl, libtommath
         install_package "tcl" "configure" "" "" "/macosx" "https" "https://downloads.sourceforge.net/project/tcl/Tcl/9.0.2/" "tcl9.0.2-src.tar.gz" "YES" "YES"
@@ -1981,27 +1598,21 @@ main() {
         # mpdecimal (versioned) -
         install_package "mpdecimal" "configure" "" "" "" "https" "https://www.bytereef.org/software/mpdecimal/releases/" "mpdecimal-4.0.1.tar.gz" "YES" "YES"
 
-        # cpython (versioned) - git (xcode), pkgconf, openssl, xz, gdbm, tcl-tk, mpdecimal
+        # cpython (versioned) - git, pkgconf, openssl, xz, gdbm, tcl-tk, mpdecimal
         # Will also install into /Library/Framework/Python.framework and /Applications/Python version
-        export LDFLAGS=""
         if [[ $INSTALL_COMMAND == "install" ]]; then
             install_package "cpython" "configure" "" \
                 " \
-                    LDFLAGS_NODIST=\"-Wl,-rpath,$INSTALL_PREFIX/lib\" \
-                    --enable-framework \
+                    --enable-shared \
                     --enable-optimizations \
                     --with-lto \
-                    --with-dbmliborder=ndbm \
+                    --with-dbmliborder=gdbm:ndbm \
                     --enable-ipv6 \
-                    --with-system-expat \
                     --with-system-libmpdec \
                 " "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES" "3.14"
         fi
         export SCRIPT_PYTHONPATH="$INSTALL_PREFIX/bin"
-        export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:$PATH"
         export SSL_CERT_DIR=$INSTALL_CERTS_DIRECTORY
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
-        export PKG_CONFIG_PATH="/Library/Frameworks/Python.framework/Versions/Current/lib/pkgconfig:$PKG_CONFIG_PATH"
 
         # pip (only upgrade) - cpython
         if [[ $INSTALL_COMMAND == "install" ]]; then
@@ -2012,6 +1623,9 @@ main() {
         install_package "sphinx" "pip"
         install_package "sphinx_rtd_theme" "pip"
 
+        # z3 - cmake, python, gmp (defer)
+        install_package "z3" "cmake" "" "-DZ3_BUILD_PYTHON_BINDINGS=TRUE -DZ3_INSTALL_PYTHON_BINDINGS=TRUE -DZ3_BUILD_JAVA_BINDINGS=TRUE -DZ3_INSTALL_JAVA_BINDINGS=TRUE" "" "git" "https://github.com/Z3Prover/z3.git" "master" "YES" "YES"
+
         # utf8proc - cmake
         install_package "utf8proc" "cmake" "" "" "" "git" "https://github.com/JuliaStrings/utf8proc.git" "master" "YES" "YES"
 
@@ -2019,7 +1633,7 @@ main() {
         install_package "libevent" "cmake" "" "" "" "git" "https://github.com/libevent/libevent.git" "master" "YES" "YES"
 
         # tmux - autoconf, automake, libtool, pkgconf, libevent, ncurses, bison, utf8proc
-        install_package "tmux" "configure" "./autogen.sh" "--enable-utf8proc CFLAGS=\"-Wl,-rpath,@loader_path/../lib\"" "" "git" "https://github.com/tmux/tmux.git" "master" "YES" "YES"
+        install_package "tmux" "configure" "./autogen.sh" "--enable-utf8proc CFLAGS=\"-Wl,-rpath,\$ORIGIN/../lib\"" "" "git" "https://github.com/tmux/tmux.git" "master" "YES" "YES"
 
         # black - python
         install_package "black" "pip"
@@ -2031,6 +1645,7 @@ main() {
         install_package "pylint" "pip"
 
         # rust (beta)
+        exit 100
         install_package "rust-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-beta-aarch64-apple-darwin.tar.xz" "YES" "YES"
 
         # rust-src (beta)
@@ -2045,7 +1660,7 @@ main() {
         # helix - rust
         export HELIX_DEFAULT_RUNTIME="$INSTALL_PREFIX/libexec/helix/runtime"
         install_package "helix" "cargo" "/helix-term" "" "" "git" "https://github.com/helix-editor/helix.git" "master" "YES" "YES"
-        add_rpath "$INSTALL_PREFIX/bin/hx" "@loader_path/../lib"
+        add_rpath "$INSTALL_PREFIX/bin/hx" "\$ORIGIN/../lib"
 
         # starship - rust
         install_package "starship" "cargo" "" "" "" "git" "https://github.com/starship/starship.git" "master" "YES" "YES"
@@ -2064,7 +1679,7 @@ main() {
 
         # vhdl_ls
         install_package "vhdl_ls" "cargo" "/vhdl_ls" "" "" "git" "https://github.com/VHDL-LS/rust_hdl.git" "master" "YES" "YES"
-        add_rpath "$INSTALL_PREFIX/bin/vhdl_ls" "@loader_path/../lib"
+        add_rpath "$INSTALL_PREFIX/bin/vhdl_ls" "\$ORIGIN/../lib"
 
         # cocotb - python
         install_package "cocotb" "pip"
@@ -2094,9 +1709,7 @@ main() {
         install_package "freetype" "cmake" "" "" "" "git" "https://github.com/freetype/freetype.git" "master" "YES" "YES"
 
         # fontconfig - autoconf, gettext, libtool, pkgconf, freetype, gperf (mac), python (mac), bzip2 (mac), expat (mac)
-        export LDFLAGS="-Wl,-rpath,$INSTALL_PREFIX/lib"
         install_package "fontconfig" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/fontconfig/fontconfig.git" "main" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # pixman (versioned) - meson
         install_package "pixman" "meson" "" "" "" "https" "https://cairographics.org/releases/" "pixman-0.46.4.tar.gz" "YES" "YES"
@@ -2120,9 +1733,8 @@ main() {
         install_package "libwebp" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/webmproject/libwebp.git" "main" "YES" "YES"
 
         # libtiff - cmake
-        export LDFLAGS="-lsharpyuv"
+        #export LDFLAGS="-lsharpyuv"
         install_package "libtiff" "configure_in_source" "./autogen.sh" "" "" "git" "https://gitlab.com/libtiff/libtiff.git" "master" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # libyuv - cmake
         install_package "libyuv" "cmake" "" "" "" "git" "https://chromium.googlesource.com/libyuv/libyuv" "main" "YES" "YES"
@@ -2138,7 +1750,7 @@ main() {
 
         # cargo-c
         install_package "cargo-c" "cargo" "" "" "" "git" "https://github.com/lu-zero/cargo-c.git" "master" "YES" "YES"
-        add_rpath "$INSTALL_PREFIX/bin/cargo-cbuild" "@loader_path/../lib"
+        add_rpath "$INSTALL_PREFIX/bin/cargo-cbuild" "\$ORIGIN/../lib"
 
         # glib - meson
         install_package "glib" "meson" "" "-Dselinux=disabled -Ddtrace=disabled -Dsystemtap=disabled -Dbsymbolic_functions=false -Dintrospection=enabled -Dtests=false" "" "git" "https://github.com/GNOME/glib.git" "main" "YES" "YES"
@@ -2162,10 +1774,8 @@ main() {
         install_package "pygments" "pip"
 
         # gdk-pixbuf
-        export LDFLAGS=""
         install_package "gdk-pixbuf" "meson" "" "" "" "git" "https://gitlab.gnome.org/GNOME/gdk-pixbuf.git" "master" "YES" "YES"
-        add_rpath "$INSTALL_PREFIX/lib/libgdk_pixbuf-2.0.0.dylib" "@loader_path/../lib"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        add_rpath "$INSTALL_PREFIX/lib/libgdk_pixbuf-2.0.0.so" "\$ORIGIN/../lib"
 
         # graphite2 - cmake
         install_package "graphite2" "cmake" "" "" "" "git" "https://github.com/silnrsi/graphite.git" "master" "YES" "YES"
@@ -2174,19 +1784,15 @@ main() {
         install_package "harfbuzz" "meson" "" "-Dtests=disabled -Dcoretext=enabled -Dgraphite2=enabled -Ddocs=disabled" "" "git" "https://github.com/harfbuzz/harfbuzz.git" "main" "YES" "YES"
 
         # pango - meson
-        export LDFLAGS=""
         install_package "pango" "meson" "" "-Dintrospection=enabled -Dfontconfig=enabled -Dcairo=enabled -Dfreetype=enabled -Dbuild-testsuite=false" "" "git" "https://gitlab.gnome.org/GNOME/pango.git" "main" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # dbus (git check pid fix)
         install_package "dbus" "cmake" "" "" "" "https" "https://dbus.freedesktop.org/releases/dbus/" "dbus-1.16.2.tar.xz" "YES" "YES"
         # install_package "dbus" "cmake" "" "" "" "git" "https://gitlab.freedesktop.org/dbus/dbus.git" "main" "YES" "YES"
 
         # at-spi2-core - meson (missing timersub)
-        export LDFLAGS="-Wl,-rpath,$INSTALL_PREFIX/lib"
         install_package "at-spi2-core" "meson" "" "" "" "https" "https://download.gnome.org/sources/at-spi2-core/2.56/" "at-spi2-core-2.56.3.tar.xz" "YES" "YES"
         # install_package "at-spi2-core" "meson" "" "" "" "git" "https://gitlab.gnome.org/GNOME/at-spi2-core.git" "main" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # chafa - pkgconf, cairo, freetype, glib, jpeg-turbo, jpeg-xl, libavif, librsvg, libtiff, webp, gdk-pixbuf, gettext
         install_package "chafa" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/hpjansson/chafa.git" "master" "YES" "YES"
@@ -2200,6 +1806,7 @@ main() {
         # mpc
         install_package "mpc" "configure" "" "" "" "git" "https://gitlab.inria.fr/mpc/mpc.git" "master" "YES" "YES"
 
+        exit 100
         # gnufortran (versioned) - ()
         # alternative is flang from llvm, but it is large download. this is gcc, but we dont want c or c++
         # install_package "gnufortran" "configure" "" "--enable-languages=fortran --disable-multilib --enable-lto --without-headers --program-prefix=gnu" "" "https" "https://ftp.gnu.org/gnu/gcc/gcc-15.1.0/" "gcc-15.1.0.tar.xz" "YES" "YES"
@@ -2224,13 +1831,10 @@ main() {
         install_package "nettle" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/nettle/" "nettle-3.10.2.tar.gz" "YES" "YES"
 
         # unbound
-        install_package "unbound" "configure" "" "--with-libexpat=$SDK_PATH/usr --with-libevent" "" "git" "https://github.com/NLnetLabs/unbound.git" "master" "YES" "YES"
+        install_package "unbound" "configure" "" "--with-libexpat --with-libevent" "" "git" "https://github.com/NLnetLabs/unbound.git" "master" "YES" "YES"
 
         # p11-kit
         install_package "p11-kit" "meson" "" "" "" "git" "https://github.com/p11-glue/p11-kit.git" "master" "YES" "YES"
-
-        # libuv
-        install_package "libuv" "cmake" "" "" "" "git" "https://github.com/libuv/libuv.git" "v1.x" "YES" "YES"
 
         # c-ares
         install_package "c-ares" "cmake" "" "" "" "git" "https://github.com/c-ares/c-ares.git" "main" "YES" "YES"
@@ -2254,9 +1858,9 @@ main() {
         install_package "libsndfile" "cmake" "" "" "" "git" "https://github.com/libsndfile/libsndfile.git" "master" "YES" "YES"
 
         # libbs2b (versioned)
-        export LDFLAGS="-lmpg123 -lmp3lame"
+        #export LDFLAGS="-lmpg123 -lmp3lame"
         install_package "libbs2b" "configure" "" "" "" "https" "https://downloads.sourceforge.net/project/bs2b/libbs2b/3.1.0/" "libbs2b-3.1.0.tar.gz" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # dav1d
         install_package "dav1d" "meson" "" "" "" "git" "https://github.com/videolan/dav1d.git" "master" "YES" "YES"
@@ -2307,25 +1911,25 @@ main() {
         install_package "portaudio" "cmake" "" "" "" "git" "https://github.com/PortAudio/portaudio.git" "master" "YES" "YES"
 
         # openmpt
-        export LDFLAGS="-lmp3lame -framework CoreServices -framework CoreAudio -framework AudioToolbox"
+        #export LDFLAGS="-lmp3lame"
         install_package "openmpt" "make_only" "" "" "" "git" "https://github.com/OpenMPT/openmpt.git" "master" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # libqrencode
         install_package "libqrencode" "cmake" "" "" "" "git" "https://github.com/fukuchi/libqrencode.git" "master" "YES" "YES"
 
         # rubberband
-        export LDFLAGS="-lmpg123 -lmp3lame"
+        #export LDFLAGS="-lmpg123 -lmp3lame"
         install_package "rubberband" "meson" "" "" "" "git" "https://github.com/breakfastquay/rubberband.git" "default" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # shine
         install_package "shine" "configure_in_source" "" "" "" "git" "https://github.com/toots/shine.git" "main" "YES" "YES"
 
         # soxr
-        export LDFLAGS="-lomp"
+        #export LDFLAGS="-lomp"
         install_package "soxr" "cmake" "" "" "" "git" "https://github.com/chirlu/soxr.git" "master" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # snappy
         install_package "snappy" "cmake" "" "-DSNAPPY_BUILD_TESTS=OFF -DSNAPPY_BUILD_BENCHMARKS=OFF" "" "git" "https://github.com/google/snappy.git" "main" "YES" "YES"
@@ -2337,9 +1941,9 @@ main() {
         install_package "svt-av1" "cmake" "" "" "" "git" "https://gitlab.com/AOMediaCodec/SVT-AV1.git" "master" "YES" "YES" "v2.3.0"
 
         # twolame (versioned)
-        export LDFLAGS="-lmpg123 -lmp3lame"
+        #export LDFLAGS="-lmpg123 -lmp3lame"
         install_package "twolame" "configure" "" "" "" "https" "https://downloads.sourceforge.net/twolame/" "twolame-0.4.0.tar.gz" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # vmaf
         install_package "vmaf" "meson" "" "" "/libvmaf" "git" "https://github.com/Netflix/vmaf.git" "master" "YES" "YES"
@@ -2359,25 +1963,12 @@ main() {
         # mesa
         install_package "mesa" "meson" "" "-Dllvm=disabled -Dshared-llvm=disabled -Dcpp_rtti=false -Dplatforms=macos -Dgallium-drivers=softpipe -Dglx=disabled" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
 
-        # depot_tools
-        install_package "depot_tools" "custom" "" "" "" "git" "https://chromium.googlesource.com/chromium/tools/depot_tools.git" "main" "YES" "YES"
-        export PATH="$PATH:${SOURCES_DIRECTORY}/depot_tools"
-
-        # angle
-        # xcodebuild -downloadComponent MetalToolchain
-        install_package "angle" "custom" "" "" "" "none" "" "" "YES" "YES"
-        install_pkg_glesv1_cm
-        install_pkg_glesv2
-        install_pkg_egl
-
         # libepoxy
-        # install_package "libepoxy" "meson" "" "-Dx11=false -Dtests=false" "" "git" "https://github.com/akihikodaki/libepoxy.git" "macos" "YES" "YES"
-        # install_package "libepoxy" "meson" "" "-Dx11=false -Dtests=false" "" "git" "https://github.com/akihikodaki/libepoxy.git" "macos" "YES" "YES"
         install_package "libepoxy" "meson" "" "-Degl=yes -Dx11=false" "" "git" "https://github.com/mohd-akram/libepoxy.git" "macos-egl" "YES" "YES"
         # install_package "libepoxy" "meson" "" "-Dx11=false -Dtests=false" "" "https" "https://download.gnome.org/sources/libepoxy/1.5/" "libepoxy-1.5.10.tar.xz" "YES" "YES"
 
         # virglrenderer
-        install_package "virglrenderer" "meson" "" "" "" "git" "https://github.com/akihikodaki/virglrenderer.git" "macos" "YES" "YES"
+        install_package "virglrenderer" "meson" "" "" "" "git" "https://gitlab.freedesktop.org/virgl/virglrenderer.git" "main" "YES" "YES"
 
         # vdev2
         install_package "vdev2" "cmake" "" "" "" "git" "https://github.com/virtualsquare/vde-2.git" "master" "YES" "YES"
@@ -2393,10 +1984,10 @@ main() {
         install_package "distlib" "pip"
 
         # gtk
-        install_package "gtk" "meson" "" "-Dx11-backend=false -Dmacos-backend=true -Dvulkan=disabled -Dmedia-gstreamer=disabled -Dbuild-examples=false -Dbuild-tests=false -Dintrospection=enabled" "" "git" "https://gitlab.gnome.org/GNOME/gtk.git" "main" "YES" "YES"
+        install_package "gtk" "meson" "" "-Dx11-backend=true -Dvulkan=disabled -Dmedia-gstreamer=disabled -Dbuild-examples=false -Dbuild-tests=false -Dintrospection=enabled" "" "git" "https://gitlab.gnome.org/GNOME/gtk.git" "main" "YES" "YES"
 
         # gtk3+
-        install_package "gtk3" "meson" "" "-Dx11_backend=false -Dquartz_backend=true -Dintrospection=true" "" "https" "https://download.gnome.org/sources/gtk+/3.24/" "gtk+-3.24.43.tar.xz" "YES" "YES"
+        install_package "gtk3" "meson" "" "-Dx11_backend=true -Dintrospection=true" "" "https" "https://download.gnome.org/sources/gtk+/3.24/" "gtk+-3.24.43.tar.xz" "YES" "YES"
 
         # gtk-doc
         install_package "gtk-doc" "meson" "" "-Dtests=false -Dyelp_manual=false" "" "git" "https://gitlab.gnome.org/GNOME/gtk-doc.git" "master" "YES" "YES"
@@ -2412,19 +2003,17 @@ main() {
         # install_package "hicolor-icon-theme" "meson" "" "" "" "https" "https://icon-theme.freedesktop.org/releases/" "hicolor-icon-theme-0.18.tar.xz" "YES" "YES"
 
         # shared-mime-info (versioned)
-        export CFLAGS="-Wno-implicit-function-declaration -Wno-pointer-integer-compare"
+        #export CFLAGS="-Wno-implicit-function-declaration -Wno-pointer-integer-compare"
         install_package "shared-mime-info" "meson" "" "" "" "https" "https://gitlab.freedesktop.org/xdg/shared-mime-info/-/archive/2.4/" "shared-mime-info-2.4.tar.bz2" "YES" "YES"
-        export CFLAGS=""
+        #export CFLAGS=""
 
         # gtkwave
         install_package "gtkwave" "meson" "" "" "" "git" "https://github.com/gtkwave/gtkwave.git" "master" "YES" "YES"
 
-        # molten-vk
-        install_package "molten-vk" "make_only" "" "macos" "" "git" "https://github.com/KhronosGroup/MoltenVK.git" "main" "YES" "YES"
-
         # fastfetch
         install_package "fastfetch" "cmake" "" "" "" "git" "https://github.com/fastfetch-cli/fastfetch.git" "dev" "YES" "YES"
 
+        exit 100
         # xavs2
         CFLAGS="-Wno-incompatible-pointer-types"
         install_package "xavs2" "configure_in_source" "" "--host=aarch64-apple-darwin24" "/build/linux" "git" "https://github.com/pkuvcl/xavs2.git" "master" "YES" "YES"
@@ -2440,9 +2029,9 @@ main() {
         install_package "zvbi" "configure" "./autogen.sh" "" "" "git" "https://github.com/zapping-vbi/zvbi.git" "main" "YES" "YES"
 
         # openal
-        export LDFLAGS="-lmpg123 -lmp3lame"
+        #export LDFLAGS="-lmpg123 -lmp3lame"
         install_package "openal" "cmake" "" "" "" "git" "https://github.com/kcat/openal-soft.git" "master" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # pocketsphinx
         install_package "pocketsphinx" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/cmusphinx/pocketsphinx.git" "main" "YES" "YES"
@@ -2474,14 +2063,14 @@ main() {
         # ffmpeg
         # --enable-libx265 removed use videotoolbox
         # --extra-cflags=-I$INSTALL_PREFIX/include --extra-ldflags=-L$INSTALL_PREFIX/lib removed
-        export LDFLAGS="-logg -lvorbis -lsharpyuv -lwebp -Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-logg -lvorbis -lsharpyuv -lwebp -Wl,-rpath,\$ORIGIN/../lib"
         install_package "ffmpeg" "configure" "" "--enable-gpl --enable-version3 --enable-nonfree --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libcdio --enable-libdav1d --enable-libfdk-aac --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libgme --enable-libharfbuzz --enable-libjxl --enable-libmp3lame --enable-libopencore-amrwb --enable-opengl --enable-libopus  --enable-libopenjpeg --enable-libopenmpt --enable-libsvtav1 --enable-libtheora --enable-libxvid  --enable-libsnappy --enable-libmysofa --enable-libopencore-amrnb --enable-libmodplug --enable-libqrencode --enable-libshine --enable-librubberband --enable-libsoxr --enable-libsnappy --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvo-amrwbenc --enable-libvpx --enable-libwebp --enable-libx264 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzvbi --enable-gcrypt --enable-gmp --enable-gnutls --enable-openal --enable-opencl --enable-pocketsphinx  --enable-libopenh264 --enable-libvmaf --enable-libxavs2 --enable-libzmq" "" "git" "https://git.ffmpeg.org/ffmpeg.git" "master" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # qemu
         install_package "qemu" "configure" "" \
             " \
-                --qemu-ga-distro=macOS \
+                --qemu-ga-distro=DragonFlyBSD \
                 --enable-opengl \
                 --enable-virglrenderer \
                 --enable-slirp \
@@ -2492,9 +2081,9 @@ main() {
                 --enable-virtfs \
                 --enable-zstd \
                 --extra-cflags=-DNCURSES_WIDECHAR=1 \
-                --enable-cocoa \
-                --disable-sdl \
-            " "" "git" "https://github.com/akihikodaki/qemu.git" "macos" "YES" "YES"
+                --enable-gtk \
+                --enable-sdl \
+            " "" "git" "https://github.com/qemu-project/qemu.git" "master" "YES" "YES"
 
         # sdl2
         install_package "sdl2" "cmake" "" "" "" "git" "https://github.com/libsdl-org/SDL.git" "SDL2" "YES" "YES"
@@ -2512,7 +2101,7 @@ main() {
 
         # mdcat
         install_package "mdcat" "cargo" "" "" "" "git" "https://github.com/swsnr/mdcat.git" "main" "YES" "YES"
-        add_rpath "$INSTALL_PREFIX/bin/mdcat" "@loader_path/../lib"
+        add_rpath "$INSTALL_PREFIX/bin/mdcat" "\$ORIGIN/../lib"
 
         # eza
         install_package "eza" "cargo" "" "" "" "git" "https://github.com/eza-community/eza.git" "main" "YES" "YES"
@@ -2580,7 +2169,7 @@ main() {
 
         # snort - cmake
         install_package "snort" "cmake" "" "-DDNET_INCLUDE_DIR=$INSTALL_PREFIX/include/dnet" "" "git" "https://github.com/snort3/snort3.git" "master" "YES" "YES"
-        sudo chmod o+r /dev/bpf*
+        chmod o+r /dev/bpf*
 
         # snort_extra - cmake
         install_package "snort_extra" "cmake" "" "" "" "git" "https://github.com/snort3/snort3_extra.git" "master" "YES" "YES"
@@ -2591,6 +2180,7 @@ main() {
         # zls (versioned to zig) - zig
         install_package "zls" "zig" "" "" "" "git" "https://github.com/zigtools/zls.git" "master" "YES" "YES"
 
+        exit 100
         # deno (versioned)
         install_package "deno" "prebuilt" "" "" "" "https" "https://github.com/denoland/deno/releases/download/v2.6.1/" "deno-aarch64-apple-darwin.zip" "YES" "NO"
 
@@ -2641,9 +2231,7 @@ main() {
 
         # postgresql (versioned)
         # install_package "postgresql" "meson" "" "" "" "git" "https://git.postgresql.org/git/postgresql.git" "REL_18_STABLE" "YES" "YES"
-        export DYLD_LIBRARY_PATH="$INSTALL_PREFIX/lib"
         install_package "postgresql" "meson" "" "" "" "git" "https://github.com/postgres/postgres.git" "REL_18_STABLE" "YES" "YES"
-        export DYLD_LIBRARY_PATH=""
 
         # pgvector
         install_package "pgvector" "make_only" "" "" "" "git" "https://github.com/pgvector/pgvector.git" "master" "YES" "YES"
@@ -2693,6 +2281,7 @@ main() {
         # outlines - python
         install_package "outlines" "pip"
 
+        exit 100
         # claude-code (versioned)
         install_package "claude-code" "prebuilt" "" "" "" "https" "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.0.60/darwin-arm64/" "claude" "YES" "NO"
 
@@ -2712,12 +2301,13 @@ main() {
         install_package "wxwidgets" "configure" "" "--enable-compat30 --with-opengl --enable-shared" "" "git" "https://github.com/wxWidgets/wxWidgets.git" "3.2" "YES" "YES"
 
         # erlang
-        export CFLAGS="-O2 -DHAVE_OPENGL_GL_H -DHAVE_OPENGL_GLU_H $CFLAGS"
-        export CXXFLAGS="$CFLAGS"
+        #export CFLAGS="-O2 -DHAVE_OPENGL_GL_H -DHAVE_OPENGL_GLU_H $CFLAGS"
+        #export CXXFLAGS="$CFLAGS"
         install_package "erlang" "configure_in_source" "" "" "" "git" "https://github.com/erlang/otp.git" "master" "YES" "YES"
-        export CFLAGS=""
-        export CXXFLAGS=""
+        #export CFLAGS=""
+        #export CXXFLAGS=""
 
+        exit 100
         # golang (versioned)
         install_package "golang" "prebuilt" "" "" "" "https" "https://go.dev/dl/" "go1.25.5.darwin-arm64.tar.gz" "YES" "NO"
 
@@ -2728,13 +2318,13 @@ main() {
         install_package "dia" "meson" "" "" "" "git" "https://gitlab.gnome.org/GNOME/dia.git" "master" "YES" "YES"
 
         # john
-        export CFLAGS="-g -O2 -Xpreprocessor -fopenmp -I$INSTALL_PREFIX/include $CFLAGS"
-        export LDFLAGS="-lomp -L$INSTALL_PREFIX/lib $LDFLAGS"
-        export CPPFLAGS="-I$INSTALL_PREFIX/include $CPPFLAGS"
+        #export CFLAGS="-g -O2 -Xpreprocessor -fopenmp -I$INSTALL_PREFIX/include $CFLAGS"
+        #export LDFLAGS="-lomp -L$INSTALL_PREFIX/lib $LDFLAGS"
+        #export CPPFLAGS="-I$INSTALL_PREFIX/include $CPPFLAGS"
         install_package "john" "configure_in_source" "" "--enable-openmp" "/src" "git" "https://github.com/openwall/john.git" "bleeding-jumbo" "YES" "YES"
-        export CFLAGS="-g -O2"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
-        export CPPFLAGS=""
+        #export CFLAGS="-g -O2"
+        #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
+        #export CPPFLAGS=""
 
         # nmap
         install_package "nmap" "configure_in_source" "" "" "" "git" "https://github.com/nmap/nmap.git" "master" "YES" "YES"
@@ -2746,9 +2336,9 @@ main() {
         install_package "xxhash" "cmake" "" "" "/cmake_unofficial" "git" "https://github.com/Cyan4973/xxHash.git" "release" "YES" "YES"
 
         # hashcat
-        export LDFLAGS="-lxxhash -L$INSTALL_PREFIX/lib $LDFLAGS"
+        #export LDFLAGS="-lxxhash -L$INSTALL_PREFIX/lib $LDFLAGS"
         install_package "hashcat" "make_only" "" "USE_SYSTEM_XXHASH=1 USE_SYSTEM_OPENCL=1 USE_SYSTEM_ZLIB=1 ENABLE_UNRAR=0" "" "git" "https://github.com/hashcat/hashcat.git" "master" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # thc-hydra todo: add more dependencies
         install_package "thc-hydra" "configure_in_source" "" "" "" "git" "https://github.com/vanhauser-thc/thc-hydra.git" "master" "YES" "YES"
@@ -2759,7 +2349,7 @@ main() {
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
             install_package "pip" "pip"
-            install_package "cpython" "configure" "" "LDFLAGS_NODIST=\"-Wl,-rpath,@loader_path/../lib\" --enable-framework --enable-optimizations --with-lto --with-dbmliborder=ndbm --enable-ipv6 --with-system-expat --with-system-libmpdec" "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES"
+            install_package "cpython" "configure" "" "LDFLAGS_NODIST=\"-Wl,-rpath,\$ORIGIN/../lib\" --enable-framework --enable-optimizations --with-lto --with-dbmliborder=ndbm --enable-ipv6 --with-system-expat --with-system-libmpdec" "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES"
         fi
 
     fi
@@ -2767,8 +2357,7 @@ main() {
     # Clean up empty directories left behind in install-prefix
     if [[ $INSTALL_COMMAND == "remove" ]]; then
         print_status "remove" "INFO" "Final cleanup"
-        sudo_check
-        sudo find "$INSTALL_PREFIX" -mindepth 2 -type d -empty -depth -exec rm -rf {} +
+        find "$INSTALL_PREFIX" -mindepth 2 -type d -empty -depth -exec rm -rf {} +
     fi
     print_status "Script $INSTALL_COMMAND" "DONE" "Completed"
     if [[ $PLAIN_TEXT == ON ]]; then

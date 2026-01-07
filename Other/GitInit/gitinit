@@ -1,0 +1,74 @@
+#!/usr/bin/env zsh
+# Quick setup script for GitHub repositories
+set -e
+
+if [[ -z "$1" || -z "$2" ]]; then
+    echo "Usage: $0 <github_username> <repo_name> [branch_name]"
+    exit 1
+fi
+
+SSH_KEY=""
+POSSIBLE_KEYS=("id_ed25519.pub" "id_rsa.pub" "id_ecdsa.pub")
+for key in "${POSSIBLE_KEYS[@]}"; do
+    if [[ -f "$HOME/.ssh/$key" ]]; then
+        SSH_KEY="$HOME/.ssh/$key"
+        break
+    fi
+done
+
+if [[ -z "$SSH_KEY" ]]; then
+    echo "Signing key is required"
+    exit 2
+fi
+
+GIT_USERNAME=$1
+REPOSITORY="${2// /_}"
+BRANCH=${3:-production}
+REMOTE_URL="git@github.com:$GIT_USERNAME/$REPOSITORY.git"
+YEAR=$(date +%Y)
+FULLNAME=$(id -F)
+
+GIT_EMAIL=$(git config --global user.email)
+if [[ -n "$GIT_EMAIL" ]]; then
+    EMAIL="$GIT_EMAIL"
+else
+    DSCL_EMAIL=$(dscl . -read "/Users/$USER" EMailAddress 2>/dev/null | awk '{print $2}')
+    if [[ -n "$DSCL_EMAIL" ]]; then
+        EMAIL="$DSCL_EMAIL"
+    else
+        EMAIL=$(osascript -e 'tell application "Contacts" to get value of email 1 of my card')
+    fi
+fi
+
+if [[ -z "$EMAIL" ]]; then
+    echo "Could not determine email address."
+    exit 3
+fi
+
+mkdir -p $REPOSITORY
+cd $REPOSITORY
+echo "# $REPOSITORY" > README.md
+echo "" >> README.md
+echo "©️ $YEAR $FULLNAME" >> README.md
+
+git init
+git add README.md
+
+git config user.name "$FULLNAME"
+git config user.email "$EMAIL"
+git config gpg.format ssh
+git config user.signingKey "$SSH_KEY"
+git config commit.gpgsign true
+git config tag.gpgsign true
+git config core.excludesFile $HOME/.config/git/gitignore
+git commit -S -m "Initial commit"
+git branch -M $BRANCH
+git remote add origin $REMOTE_URL
+
+while ! git ls-remote "$REMOTE_URL" &> /dev/null; do
+    echo "Missing remote repository https://github.com/$GIT_USERNAME/$REPOSITORY"
+    echo "Please create and press enter or cancel with Ctrl-C"
+    read -k 1 -s
+done
+
+git push -u origin $BRANCH

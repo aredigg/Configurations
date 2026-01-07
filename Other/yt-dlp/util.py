@@ -35,7 +35,9 @@ def dict_save(data, saved_list, indent=0):
                 saved_list.append(" " * indent + f"\033[36m- {key} - \033[39m\033[0K\n")
                 dict_save(value, saved_list, indent + 4)
             else:
-                saved_list.append(" " * indent + f"\033[36m- {key} - \033[39m{value}\033[0K\n")
+                saved_list.append(
+                    " " * indent + f"\033[36m- {key} - \033[39m{value}\033[0K\n"
+                )
     elif isinstance(data, list):
         for i, value in enumerate(data):
             if isinstance(value, list) or isinstance(value, dict):
@@ -49,7 +51,11 @@ def dict_save(data, saved_list, indent=0):
 
 def save_list_to_file(prefix, save_list, output_directory):
     os.makedirs(output_directory + "/save", exist_ok=True)
-    filename = output_directory + f"/save/{prefix}_" + datetime.datetime.now().strftime("%Y-%m-%d_%H_%M_%S")
+    filename = (
+        output_directory
+        + f"/save/{prefix}_"
+        + datetime.datetime.now().strftime("%Y-%m-%d_%H_%M_%S")
+    )
     with open(filename, "w") as output:
         output.writelines(save_list)
 
@@ -183,7 +189,10 @@ def sleep_calc(duration):
     eta = datetime.datetime.now() + datetime.timedelta(seconds=duration)
     if duration < 1800:
         return f"Sleeping for {sleep_time}", duration
-    return f"Sleeping for {sleep_time}, waking at {eta.strftime('%d %H:%M:%S (%A)')}", duration
+    return (
+        f"Sleeping for {sleep_time}, waking at {eta.strftime('%d %H:%M:%S (%A)')}",
+        duration,
+    )
 
 
 def trim_mean(samples, trim=0.05):

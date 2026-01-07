@@ -257,7 +257,13 @@ class BxDraw:
 
 
 class CLIPrint:
-    def __init__(self, slots: int = 1, headers: int = 2, logger: Logger | None = None, debug: bool = False) -> None:
+    def __init__(
+        self,
+        slots: int = 1,
+        headers: int = 2,
+        logger: Logger | None = None,
+        debug: bool = False,
+    ) -> None:
         self._w: int = size().columns - 2
         self._h: int = size().lines
         self._slots: int = slots
@@ -266,7 +272,9 @@ class CLIPrint:
         self._debug: bool = debug
         self._lines: list[str | None] = []
         self._hlines: list[str | None] = [""] * self._headers
-        self._slines: list[tuple[str, str, str, str, str, str] | None] = [("", " ", "", "", "", "")] * self._slots
+        self._slines: list[tuple[str, str, str, str, str, str] | None] = [
+            ("", " ", "", "", "", "")
+        ] * self._slots
         self._mlines: list[list[str]] = []
         self._status: str = "CLI Print Ready"
         self._debug_line: str = "Debug" if debug else ""
@@ -414,7 +422,9 @@ class CLIPrint:
 
     def _hsline(self, top: bool) -> str:
         if top:
-            return BxDraw.Squared.LT + BxDraw.Squared.H * (self._w - 2) + BxDraw.Squared.RT
+            return (
+                BxDraw.Squared.LT + BxDraw.Squared.H * (self._w - 2) + BxDraw.Squared.RT
+            )
         return BxDraw.Squared.LB + BxDraw.Squared.H * (self._w - 2) + BxDraw.Squared.RB
 
     def _hmline(self) -> str:
@@ -450,7 +460,13 @@ class CLIPrint:
     def _wnline(self, text: str) -> str:
         text = text[: self._w - 8]
         ext = self._w - 6 - ANSI.len(text)
-        return BxDraw.Double.LT + BxDraw.Double.H * 2 + f" {text} " + BxDraw.Double.H * ext + BxDraw.Double.RT
+        return (
+            BxDraw.Double.LT
+            + BxDraw.Double.H * 2
+            + f" {text} "
+            + BxDraw.Double.H * ext
+            + BxDraw.Double.RT
+        )
 
     def _redraw_main_body(self, buffer: list[str | None]) -> None:
         if self._mlines and self._mlines[0] and self._mlines[0][0]:
@@ -463,7 +479,15 @@ class CLIPrint:
                         buffer.append(self._hline(""))
             buffer.append(self._hsline(top=False))
 
-    slot_header = [" Slot ", "   Time   ", " Status", " Resolution", " Bitrate", "  Previous ", "Channel"]
+    slot_header = [
+        " Slot ",
+        "   Time   ",
+        " Status",
+        " Resolution",
+        " Bitrate",
+        "  Previous ",
+        "Channel",
+    ]
 
     def _sshline(self) -> str:
         ln = BxDraw.Squared.LT + BxDraw.Squared.H
