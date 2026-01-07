@@ -1460,7 +1460,7 @@ main() {
         # llvm_bootstrap - python
         install_package "llvm_bootstrap" "cmake" "" \
             " \
-                -DLLVM_ENABLE_PROJECTS='clang;lld' \
+                -DLLVM_ENABLE_PROJECTS='clang;lld;libcxx;libcxxabi' \
                 -DLLVM_TARGETS_TO_BUILD='X86' \
             " "/llvm" "git" "https://github.com/llvm/llvm-project.git" "release/21.x" "YES" "YES"
 
@@ -1470,6 +1470,14 @@ main() {
         export AR="$BOOTSTRAP_PREFIX/bin/llvm-ar"
         export NM="$BOOTSTRAP_PREFIX/bin/llvm-nm"
         export RANLIB="$BOOTSTRAP_PREFIX/bin/llvm-ranlib"
+
+        export OLD_CXXFLAGS="$CXXFLAGS"
+        export OLD_LDFLAGS="$LDFLAGS"
+        export CXXFLAGS="-stdlib=libc++ -I$BOOTSTRAP_PREFIX/include/c++/v1"
+        export LDFLAGS="-L$BOOTSTRAP_PREFIX/lib -Wl,-rpath,$BOOTSTRAP_PREFIX/lib -lc++ -lc++abi"
+
+        # z3 - cmake, python, llvm_bootstrap, gmp (defer)
+        install_package "z3" "cmake" "" "-DBUILD_SHARED_LIBS=OFF -DZ3_BUILD_PYTHON_BINDINGS=TRUE -DZ3_INSTALL_PYTHON_BINDINGS=TRUE -DZ3_BUILD_JAVA_BINDINGS=FALSE -DZ3_INSTALL_JAVA_BINDINGS=FALSE" "" "git" "https://github.com/Z3Prover/z3.git" "master" "YES" "YES"
 
         # llvm - python, llvm_bootstrap
         install_package "llvm" "cmake" "" \
@@ -1530,9 +1538,9 @@ main() {
         export AR="$INSTALL_PREFIX/bin/llvm-ar"
         export NM="$INSTALL_PREFIX/bin/llvm-nm"
         export RANLIB="$INSTALL_PREFIX/bin/llvm-ranlib"
-        export LDFLAGS="$LDFLAGS -fuse-ld=lld"
+        export LDFLAGS="$OLD_LDFLAGS -fuse-ld=lld"
         export CFLAGS="$CFLAGS -flto=thin"
-        export CXXFLAGS="$CXXFLAGS -flto=thin"
+        export CXXFLAGS="$OLD_CXXFLAGS -stdlib=libc++ -flto=thin"
 
         # libtommath - cmake, libtool
         install_package "libtommath" "cmake" "" "" "" "git" "https://github.com/libtom/libtommath.git" "develop" "YES" "YES"
@@ -1629,9 +1637,6 @@ main() {
         # sphinx - pip
         install_package "sphinx" "pip"
         install_package "sphinx_rtd_theme" "pip"
-
-        # z3 - cmake, python, gmp (defer)
-        install_package "z3" "cmake" "" "-DZ3_BUILD_PYTHON_BINDINGS=TRUE -DZ3_INSTALL_PYTHON_BINDINGS=TRUE -DZ3_BUILD_JAVA_BINDINGS=TRUE -DZ3_INSTALL_JAVA_BINDINGS=TRUE" "" "git" "https://github.com/Z3Prover/z3.git" "master" "YES" "YES"
 
         # utf8proc - cmake
         install_package "utf8proc" "cmake" "" "" "" "git" "https://github.com/JuliaStrings/utf8proc.git" "master" "YES" "YES"
