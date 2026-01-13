@@ -724,7 +724,11 @@ install_configure() {
         else
             configure_options+=("--prefix=$INSTALL_PREFIX")
         fi
-        configure_options+=( "${(Q)${(z)tool_options}}" )
+        if [[ $tool_options =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && (( ${+parameters[$tool_options]} )); then
+             configure_options+=( "${(@P)tool_options}" )
+        elif [[ -n $tool_options ]]; then
+             configure_options+=( "${(Q)${(z)tool_options}}" )
+        fi
         if [[ -f "${source_directory}/configure" ]]; then
             "${source_directory}/configure" $configure_options
         elif [[ -f "${source_directory}/Configure" ]]; then
@@ -784,7 +788,12 @@ install_make_only() {
     if command -v gnumake >/dev/null 2>&1; then
         make_cmd="gnumake"
     fi
-    local make_options=( "${(Q)${(z)tool_options}}" )
+    local make_options=()
+    if [[ $tool_options =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && (( ${+parameters[$tool_options]} )); then
+            make_options+=( "${(@P)tool_options}" )
+    elif [[ -n $tool_options ]]; then
+            make_options+=( "${(Q)${(z)tool_options}}" )
+    fi
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
         cd "$source_directory"
@@ -804,6 +813,7 @@ install_make_only() {
             sed -i '' "s|/usr/local|${INSTALL_PREFIX}${custom_prefix}|g" "$source_directory/Makefile" "$source_directory"/*/Makefile(N)
         fi
         print_status $package "INFO" "Building"
+        print $make_cmd -j$CONCURRENT_JOBS $make_options
         $make_cmd -j$CONCURRENT_JOBS $make_options
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
@@ -839,8 +849,12 @@ install_cmake() {
             "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON"
             "-DCMAKE_INSTALL_RPATH_USE_LINK_RPATH=OFF"
             "-DCMAKE_BUILD_TYPE=Release"
-            "${(Q)${(z)tool_options}}"
         )
+        if [[ $tool_options =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && (( ${+parameters[$tool_options]} )); then
+                cmake_options+=( "${(@P)tool_options}" )
+        elif [[ -n $tool_options ]]; then
+                cmake_options+=( "${(Q)${(z)tool_options}}" )
+        fi
         if [[ $package == *_bootstrap ]]; then
             cmake_options+=("-DCMAKE_INSTALL_PREFIX=$BOOTSTRAP_PREFIX")
         elif [[ $package == *(_stage_1|_stage_2) ]]; then
@@ -872,15 +886,19 @@ install_meson() {
         meson_update_wraps $package "$source_directory"
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
-        local meson_args=(
+        local meson_options=(
             "setup"
             "--prefix=$INSTALL_PREFIX"
             "--buildtype" "release"
             "-Ddefault_library=shared"
-            "${(Q)${(z)tool_options}}"
         )
+        if [[ $tool_options =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && (( ${+parameters[$tool_options]} )); then
+            meson_options+=( "${(@P)tool_options}" )
+        elif [[ -n $tool_options ]]; then
+            meson_options+=( "${(Q)${(z)tool_options}}" )
+        fi
         cd "$source_directory"
-        meson $meson_args "$build_directory"
+        meson $meson_options "$build_directory"
         print_status $package "INFO" "Building"
         meson compile -C "$build_directory"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
@@ -900,7 +918,12 @@ install_prebuilt() {
         if [[ $prebuilt_installer != "" ]]; then
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
-            local run_options=( "${(Q)${(z)installer_options}}" )
+            local run_options=()
+            if [[ $tool_options =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && (( ${+parameters[$tool_options]} )); then
+                run_options+=( "${(@P)tool_options}" )
+            elif [[ -n $tool_options ]]; then
+                run_options+=( "${(Q)${(z)tool_options}}" )
+            fi
             "${source_directory}/${prebuilt_installer}" $run_options
         elif [[ $package == "jdtls" ]]; then
             # based on AUR script
@@ -1370,6 +1393,15 @@ pre_patch() {
                     "$source_directory/cmake/modules/FindZ3.cmake"
                 sed -i '' 's/set(Z3_VERSION_STRING "0.0.0")/set(Z3_VERSION_STRING "4.15.0")/g' "$source_directory/cmake/modules/FindZ3.cmake"
                 ;;
+            rtmpdump)
+                sed -i '' '/^CC=/d' "$source_directory/Makefile"
+                sed -i '' '/^LD=/d' "$source_directory/Makefile"
+                sed -i '' 's/^CFLAGS=.*$/CFLAGS=$(XCFLAGS) $(INC) $(DEF)/' "$source_directory/Makefile"
+            	sed -i '' 's/^LDFLAGS=.*$/LDFLAGS=$(XLDFLAGS)/' "$source_directory/Makefile"
+                ;;
+            ne)
+                sed -i '' '/cd src/s/; / \&\& /g' "$source_directory/makefile"
+                ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
@@ -1638,7 +1670,7 @@ main() {
         install_package "swig" "cmake" "" "-DPCRE2_INCLUDE_DIRS=\"$INSTALL_PREFIX/include\"" "" "git" "https://github.com/swig/swig.git" "master" "YES" "YES"
 
         # xz - cmake, gettext (defer)
-        install_package "xz" "cmake" "" "" "" "git" "https://github.com/tukaani-project/xz.git" "master" "YES" "YES"
+        install_package "xz" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/tukaani-project/xz.git" "master" "YES" "YES"
 
         # lz4 -
         install_package "lz4" "make_only" "" "" "" "git" "https://github.com/lz4/lz4.git" "dev" "YES" "YES"
@@ -1662,13 +1694,24 @@ main() {
         install_package "libssh2" "cmake" "" "" "" "git" "https://github.com/libssh2/libssh2.git" "master" "YES" "YES"
 
         # rtmpdump - openssl, zlib
-        install_package "rtmpdump" "make_only" "" "SYS=posix XLDFLAGS=\"$LDFLAGS\" XCFLAGS=\"$CFLAGS\"" "" "git" "https://git.ffmpeg.org/rtmpdump.git" "master" "YES" "YES"
+        local rtmp_options=(
+            "SYS=posix"
+            "CC=$CC"
+            "LD=$LD"
+            "XLDFLAGS=$LDFLAGS -Wl,-rpath,$INSTALL_PREFIX/lib"
+            "XCFLAGS=$CFLAGS"
+        )
+        install_package "rtmpdump" "make_only" "" "rtmp_options" "" "git" "https://git.ffmpeg.org/rtmpdump.git" "master" "YES" "YES"
 
         # krb5
         install_package "krb5" "configure" "" "LDFLAGS=\"-L$INSTALL_PREFIX/lib\"" "/src" "git" "https://github.com/krb5/krb5.git" "master" "YES" "YES"
 
         # openldap
-        install_package "openldap" "configure" "" "--disable-slapd CFLAGS=\"-std=gnu99 -I$INSTALL_PREFIX/include\"" "" "git" "https://git.openldap.org/openldap/openldap.git" "master" "YES" "YES"
+        local openldap_options=(
+            "--disable-slapd"
+            "CFLAGS=-std=gnu99 -I$INSTALL_PREFIX/include"
+        )
+        install_package "openldap" "configure" "" "openldap_options" "" "git" "https://git.openldap.org/openldap/openldap.git" "master" "YES" "YES"
 
         # curl - pkgconf, brotli, nghttp2, nghttp3, psl (deferred), libssh2, openssl, rtmpdump, zstd, zlib
         install_package "curl" "cmake" "" \
@@ -1685,16 +1728,30 @@ main() {
                         "" "git" "https://github.com/curl/curl.git" "master" "YES" "YES"
 
         # gnu-nano
-        install_package "nano" "configure" "./autogen.sh" "--enable-color -enable-extra --enable-multibuffer --enable-nanorc --enable-utf8" "" "git" "git://git.savannah.gnu.org/nano.git" "master" "YES" "YES"
+        local options=(
+            "--enable-color"
+            "--enable-extra"
+            "--enable-multibuffer"
+            "--enable-nanorc"
+            "--enable-utf8"
+        )
+        install_package "nano" "configure" "./autogen.sh" "options" "" "git" "git://git.savannah.gnu.org/nano.git" "master" "YES" "YES"
 
         # ne - nice editor
-        install_package "ne" "make_only" "" "build" "" "git" "https://github.com/vigna/ne.git" "master" "YES" "YES"
+        local options=(
+            "build"
+            "LIBS=-lncursesw"
+            "OPTS=-I$INSTALL_PREFIX/include -I$INSTALL_PREFIX/include/ncurses"
+            "LDFLAGS=-L$INSTALL_PREFIX/lib -Wl,-rpath,$INSTALL_PREFIX/lib"
+        )
+        install_package "ne" "make_only" "" "options" "" "git" "https://github.com/vigna/ne.git" "master" "YES" "YES"
 
         # tcl (versioned) - openssl, libtommath
-        install_package "tcl" "configure" "" "" "/macosx" "https" "https://downloads.sourceforge.net/project/tcl/Tcl/9.0.2/" "tcl9.0.2-src.tar.gz" "YES" "YES"
+        install_package "tcl" "configure" "" "" "/unix" "https" "https://downloads.sourceforge.net/project/tcl/Tcl/9.0.2/" "tcl9.0.2-src.tar.gz" "YES" "YES"
 
-        # tk (versioned) - tcl
-        install_package "tk" "configure" "" "--with-tcl=${BUILDS_DIRECTORY}/tcl --enable-aqua=yes" "/macosx" "https" "http://prdownloads.sourceforge.net/tcl/" "tk9.0.2-src.tar.gz" "YES" "YES"
+        # tk (versioned) - tcl, x11
+        # not planning to install x11
+        # install_package "tk" "configure" "" "--with-tcl=${BUILDS_DIRECTORY}/tcl" "/unix" "https" "http://prdownloads.sourceforge.net/tcl/" "tk9.0.2-src.tar.gz" "YES" "YES"
 
         # mpdecimal (versioned) -
         install_package "mpdecimal" "configure" "" "" "" "https" "https://www.bytereef.org/software/mpdecimal/releases/" "mpdecimal-4.0.1.tar.gz" "YES" "YES"
@@ -1702,15 +1759,14 @@ main() {
         # cpython (versioned) - git, pkgconf, openssl, xz, gdbm, tcl-tk, mpdecimal
         # Will also install into /Library/Framework/Python.framework and /Applications/Python version
         if [[ $INSTALL_COMMAND == "install" ]]; then
-            install_package "cpython" "configure" "" \
-                " \
-                    --enable-shared \
-                    --enable-optimizations \
-                    --with-lto \
-                    --with-dbmliborder=gdbm:ndbm \
-                    --enable-ipv6 \
-                    --with-system-libmpdec \
-                " "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES" "3.14"
+            local options=(
+                "--enable-shared"
+                "--with-lto=thin"
+                "--with-dbmliborder=gdbm:ndbm"
+                "--enable-ipv6"
+                "--with-system-libmpdec"
+            )
+            install_package "cpython" "configure" "" "options" "" "git" "https://github.com/python/cpython.git" "main" "YES" "YES" "3.14"
         fi
         export SCRIPT_PYTHONPATH="$INSTALL_PREFIX/bin"
         export SSL_CERT_DIR=$INSTALL_CERTS_DIRECTORY
