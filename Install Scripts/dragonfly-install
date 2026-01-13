@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-VERSION="1.20"
+VERSION="1.21"
 SKIPTIME="864000"
 SPINNER_INTERVAL=0.4
 SPINNER_PLAIN_INTERVAL=1
@@ -93,48 +93,63 @@ print_status() {
     if [[ $PLAIN_TEXT == ON ]]; then
         print -n "\n[$2]: ($local_time) $1 - $3 " > /dev/tty
     else
-        if [[ "$1" == *_bootstrap ]]; then
-            printf "\033[2;5H$FANCY_COLOR_BEGIN BOOTSTRAP %-11s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "${1%_bootstrap}" "$3" > /dev/tty
-        else
-            printf "\033[2;5H$FANCY_COLOR_BEGIN %-21s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$1" "$3" > /dev/tty
-        fi
+        case "$1" in
+            *_bootstrap)
+                base="${1%_bootstrap}"
+                printf "\033[2;5H$FANCY_COLOR_BEGIN Bootstrap %-11s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$base" "$3" > /dev/tty
+                ;;
+            *_stage_1)
+                base="${1%_stage_1}"
+                printf "\033[2;5H$FANCY_COLOR_BEGIN Stage 1 %-11s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$base" "$3" > /dev/tty
+                ;;
+            *_stage_2)
+                base="${1%_stage_2}"
+                printf "\033[2;5H$FANCY_COLOR_BEGIN Stage 2 %-11s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$base" "$3" > /dev/tty
+                ;;
+            *)
+                printf "\033[2;5H$FANCY_COLOR_BEGIN %-21s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$1" "$3" > /dev/tty
+                ;;
+        esac
     fi
 }
-
-# sudo_check() this script should be run as root
 
 uninstall_manifested() {
     local package=$1
     local manifest_file="$2"
-    local uninstall_directories=()
+    local removing_bootstrap="$3"
 
     if [ -f "$manifest_file" ]; then
         print_status $package "WARN" "Uninstalling"
-
-        while IFS= read -r uninstall_file; do
-            if [ -f "$uninstall_file" ]; then
-                print "Removing $uninstall_file"
-                rm "$uninstall_file"
+        local files=( "${(@f)$(< "$manifest_file")}" )
+        if (( ${#files} == 0 )); then
+            if [[ $removing_bootstrap != YES ]]; then
+                print_status $package "WARN" "Manifest empty"
+                rm -f "$manifest_file"
             fi
-            uninstall_directories+=($(dirname "$uninstall_file"))
-        done < "$manifest_file"
-
-        uninstall_directories=($(printf "%s\n" "${uninstall_directories[@]}" | awk '!visited[$0]++' | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-))
-
-        for uninstall_directory in "${uninstall_directories[@]}"; do
-            if [[ -d "$uninstall_directory" ]]; then
-                print "Checking $uninstall_directory"
-                find "$uninstall_directory" -type l ! -exec test -e {} \; -exec rm -f {} \;
-                if [[ -z "$(ls -A "$uninstall_directory")" ]]; then
-                    print "Removing $uninstall_directory"
-                    rm -rf "$uninstall_directory"
+            return
+        fi
+        local -U dirs=( "${files:h}" )
+        local sorted_dirs=( "${(O)dirs[@]}" )
+        for file in "${files[@]}"; do
+            if [[ -f "$file" || -L "$file" ]]; then
+                print "Removing $file"
+                rm -f "$file"
+            fi
+        done
+        for dir in "${sorted_dirs[@]}"; do
+            if [[ -d "$dir" ]]; then
+                find "$dir" -type l ! -exec test -e {} \; -delete 2>/dev/null
+                if rmdir "$dir" 2>/dev/null; then
+                    print "Removed empty dir: $dir"
                 fi
             fi
         done
-        rm "$manifest_file"
-    else
-        print_status $package "WARN" "Not manifested"
-    fi
+        if [[ $removing_bootstrap != YES ]]; then
+            rm -f "$manifest_file"
+        fi
+	else
+	    print_status $package "WARN" "Not manifested"
+	fi
 }
 
 check_activity() {
@@ -211,13 +226,36 @@ spinner() {
 
 add_rpath() {
     local filename="$1"
-    local rpath="$2"
-    # Check if rpath already exists
-    if ! readelf -d "$filename" 2>/dev/null | grep -q "RUNPATH.*$rpath"; then
-        patchelf --add-rpath "$rpath" "$filename" 2>/dev/null || \
-        chrpath -r "$rpath" "$filename" 2>/dev/null || \
-        print_status "$(basename $filename)" "WARN" "Could not add rpath"
+    local target_rpath="$2"
+    local current_rpath=$(patchelf --print-rpath "$filename" 2>/dev/null)
+    local rpath_list=( "${(@s/:/)current_rpath}" )
+    if (( ! ${rpath_list[(Ie)$target_rpath]} )); then
+        patchelf --add-rpath "$target_rpath" "$filename"
     fi
+}
+
+replace_rpath() {
+    local filename="$1"
+    local target_rpath="$2"
+    local current_rpath=$(patchelf --print-rpath "$filename" 2>/dev/null)
+    if [[ "$current_rpath" != "$target_rpath" ]]; then
+        patchelf --set-rpath "$target_rpath" "$filename"
+    fi
+}
+
+# this has hardcoded /usr/lib/gcc80 but hopefully this function will not be necessary
+set_rpath() {
+    local manifest="$1"
+    local target_rpath='$ORIGIN/../lib:/usr/lib/gcc80'
+    local files=( "${(@f)$(< "$manifest")}" )
+    for f in "${files[@]}"; do
+        local current_rpath
+        if current_rpath=$(patchelf --print-rpath "$f" 2>/dev/null); then
+            if [[ "$current_rpath" != "$target_rpath" ]]; then
+                patchelf --set-rpath "$target_rpath" "$f"
+            fi
+        fi
+    done
 }
 
 create_archive() {
@@ -291,10 +329,11 @@ setup() {
     BUILDS_DIRECTORY="$SWD/builds"
     LOGS_DIRECTORY="$SWD/logs"
     BOOTSTRAP_PREFIX="$SWD/bootstrap"
-    mkdir -p "$MANIFEST_DIRECTORY" "$ARCHIVE_DIRECTORY" "$SOURCES_DIRECTORY" "$BUILDS_DIRECTORY" "$LOGS_DIRECTORY" "$BOOTSTRAP_PREFIX"
+    STAGE_PREFIX="$SWD/stage"
+    mkdir -p "$MANIFEST_DIRECTORY" "$ARCHIVE_DIRECTORY" "$SOURCES_DIRECTORY" "$BUILDS_DIRECTORY" "$LOGS_DIRECTORY" "$BOOTSTRAP_PREFIX" "$STAGE_PREFIX"
     INSTALL_LOG_OUT="$LOGS_DIRECTORY/log_out.log"
     INSTALL_LOG_ERR="$LOGS_DIRECTORY/log_err.log"
-    export PATH="${BOOTSTRAP_PREFIX}/bin:${INSTALL_PREFIX}/bin:${PATH:-}"
+    export PATH="${BOOTSTRAP_PREFIX}/bin:${INSTALL_PREFIX}/bin:${STAGE_PREFIX}/bin:${PATH:-}"
     export SCRIPT_PYTHONPATH=$(dirname $(which python3))
     while true; do; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
     if [[ $PLAIN_TEXT == OFF ]]; then
@@ -637,7 +676,7 @@ download_https() {
 }
 
 download() {
-    local download_package=${1%_bootstrap}
+    local download_package="$1"
     # package-name, command, url, filename/branch, etag (https), strip (https-extract), tag
     case "$2" in
         git)
@@ -661,8 +700,11 @@ install_configure() {
     local tool_options="$3"
     local source_directory="$4"
     local build_directory="$5"
-    local restore_ldflags="$LDFLAGS"
-    export LDFLAGS="$LDFLAGS -Wl,-rpath,\$\$ORIGIN/../lib"
+    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib'"
+    local make_cmd="make"
+    if command -v gnumake >/dev/null 2>&1; then
+        make_cmd="gnumake"
+    fi
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
         if [[ $build_directory != "" ]]; then
@@ -672,58 +714,59 @@ install_configure() {
             build_directory="$source_directory"
             cd "$source_directory"
         fi
+        local configure_options=()
         if [[ $package == "perl" ]]; then
-            configure_options="-Dprefix=$INSTALL_PREFIX ${tool_options}"
+            configure_options+=("-Dprefix=$INSTALL_PREFIX")
         elif [[ $package == *_bootstrap ]]; then
-            configure_options="--prefix=$BOOTSTRAP_PREFIX ${tool_options}"
+            configure_options+=("--prefix=$BOOTSTRAP_PREFIX")
+        elif [[ $package == *(_stage_1|_stage_2) ]]; then
+            configure_options+=("--prefix=$STAGE_PREFIX")
         else
-            configure_options="--prefix=$INSTALL_PREFIX ${tool_options}"
+            configure_options+=("--prefix=$INSTALL_PREFIX")
         fi
+        configure_options+=( "${(Q)${(z)tool_options}}" )
         if [[ -f "${source_directory}/configure" ]]; then
-            eval "${source_directory}/configure $configure_options"
+            "${source_directory}/configure" $configure_options
         elif [[ -f "${source_directory}/Configure" ]]; then
-            eval "${source_directory}/Configure $configure_options"
+            "${source_directory}/Configure" $configure_options
         elif [[ -f "${source_directory}/bootstrap" ]]; then
-            eval "${source_directory}/bootstrap $configure_options" || eval "${source_directory}/bootstrap --force"
+            if ! "${source_directory}/bootstrap" $configure_options; then
+                 "${source_directory}/bootstrap" --force
+            fi
             if [[ -f "${source_directory}/configure" ]]; then
-                eval "${source_directory}/configure $configure_options"
+                "${source_directory}/configure" $configure_options
             fi
         else
-            cd "$source_directory"
-            if [[ -f "${source_directory}/$configure_builder" ]]; then
-                eval "${source_directory}/$configure_builder"
-            elif [[ -f "${source_directory}/configure.ac" ]]; then
+            pushd "$source_directory" > /dev/null
+            if [[ -f "$configure_builder" ]]; then
+                "./$configure_builder"
+            elif [[ -f "configure.ac" ]]; then
                 autoreconf --force --install
+            else
+                print "Missing configurer, $PWD"
             fi
-            cd "$build_directory"
+            popd > /dev/null
             if [[ -f "${source_directory}/configure" ]]; then
-                eval "${source_directory}/configure $configure_options"
+                "${source_directory}/configure" $configure_options
             fi
         fi
         print_status $package "INFO" "Building"
-        if command -v gnumake >/dev/null 2>&1; then
-            gnumake -j$CONCURRENT_JOBS
-        else
-            make -j$CONCURRENT_JOBS
-        fi
+        $make_cmd -j$CONCURRENT_JOBS
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
         if [[ $package == "john" ]]; then
             mv ../run/john $INSTALL_PREFIX/bin
             mkdir -p $INSTALL_PREFIX/share/john
             cp -a ../run/* $INSTALL_PREFIX/share/john
-            mv $INSTALL_PREFIX/share/john/*.{pl,py,rb} $INSTALL_PREFIX/share/john/{relbench,benchmark-unify,mailer,makechr} $INSTALL_PREFIX/bin
+            mv "$INSTALL_PREFIX/share/john/"*.{pl,py,rb} \
+                 "$INSTALL_PREFIX/share/john/"{relbench,benchmark-unify,mailer,makechr} \
+                 "$INSTALL_PREFIX/bin" 2>/dev/null || true
         else
-            if command -v gnumake >/dev/null 2>&1; then
-                gnumake install
-            else
-                make install
-            fi
+            $make_cmd install
         fi
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
-    export LDFLAGS="$restore_ldflags"
 }
 
 target_exists() {
@@ -736,8 +779,12 @@ install_make_only() {
     local custom_prefix="$2"
     local tool_options=$3
     local source_directory="$4"
-    local restore_ldflags="$LDFLAGS"
-    export LDFLAGS="$LDFLAGS -Wl,-rpath,\$\$ORIGIN/../lib"
+    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib'"
+    local make_cmd="make"
+    if command -v gnumake >/dev/null 2>&1; then
+        make_cmd="gnumake"
+    fi
+    local make_options=( "${(Q)${(z)tool_options}}" )
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
         cd "$source_directory"
@@ -754,22 +801,14 @@ install_make_only() {
         fi
         if [[ -f "${source_directory}/Makefile" ]]; then
             print_status $package "WARN" "Patching"
-            sed -i '' "s|/usr/local|${INSTALL_PREFIX}${custom_prefix}|g" "$source_directory/Makefile" $source_directory/*/Makefile
+            sed -i '' "s|/usr/local|${INSTALL_PREFIX}${custom_prefix}|g" "$source_directory/Makefile" "$source_directory"/*/Makefile(N)
         fi
         print_status $package "INFO" "Building"
-        if command -v gnumake >/dev/null 2>&1; then
-            eval "gnumake -j$CONCURRENT_JOBS $tool_options"
-        else
-            eval "make -j$CONCURRENT_JOBS $tool_options"
-        fi
+        $make_cmd -j$CONCURRENT_JOBS $make_options
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
         if target_exists "install"; then
-            if command -v gnumake >/dev/null 2>&1; then
-                eval "gnumake $tool_options install"
-            else
-                eval "make $tool_options install"
-            fi
+            $make_cmd $make_options install
         elif [[ $package == "hashcat" ]]; then
             mv "${source_directory}/hashcat" "$INSTALL_PREFIX/bin"
             mkdir -p $INSTALL_PREFIX/share/hashcat
@@ -781,7 +820,6 @@ install_make_only() {
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
-    export LDFLAGS="$restore_ldflags"
 }
 
 install_cmake() {
@@ -794,15 +832,26 @@ install_cmake() {
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
         cd "$build_directory"
+        local cmake_options=(
+            "-Wno-dev"
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+            '-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib'
+            "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON"
+            "-DCMAKE_INSTALL_RPATH_USE_LINK_RPATH=OFF"
+            "-DCMAKE_BUILD_TYPE=Release"
+            "${(Q)${(z)tool_options}}"
+        )
         if [[ $package == *_bootstrap ]]; then
-            cmake_options="-Wno-dev -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_INSTALL_PREFIX=$BOOTSTRAP_PREFIX -DCMAKE_INSTALL_RPATH=\"\$ORIGIN/../lib\" -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH_USE_LINK_RPATH=OFF -DCMAKE_BUILD_TYPE=Release ${tool_options}"
+            cmake_options+=("-DCMAKE_INSTALL_PREFIX=$BOOTSTRAP_PREFIX")
+        elif [[ $package == *(_stage_1|_stage_2) ]]; then
+            cmake_options+=("-DCMAKE_INSTALL_PREFIX=$STAGE_PREFIX")
         else
-            cmake_options="-Wno-dev -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DCMAKE_INSTALL_RPATH=\"\$ORIGIN/../lib\" -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH_USE_LINK_RPATH=OFF -DCMAKE_BUILD_TYPE=Release ${tool_options}"
+            cmake_options+=("-DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX")
         fi
         if [[ $package != "ninja" ]]; then
-            cmake_options="-GNinja $cmake_options"
+            cmake_options+=("-GNinja")
         fi
-        eval "cmake $cmake_options \"$source_directory\""
+        cmake $cmake_options "$source_directory"
         print_status $package "INFO" "Building"
         cmake --build . --parallel=$CONCURRENT_JOBS
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
@@ -818,14 +867,20 @@ install_meson() {
     local tool_options="$2"
     local source_directory="$3"
     local build_directory="$4"
-    local restore_ldflags="$LDFLAGS"
-    export LDFLAGS="$LDFLAGS -Wl,-rpath,\$ORIGIN/../lib"
+    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib'"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         meson_update_wraps $package "$source_directory"
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
+        local meson_args=(
+            "setup"
+            "--prefix=$INSTALL_PREFIX"
+            "--buildtype" "release"
+            "-Ddefault_library=shared"
+            "${(Q)${(z)tool_options}}"
+        )
         cd "$source_directory"
-        eval "meson setup --prefix=$INSTALL_PREFIX --buildtype release -Ddefault_library=shared $tool_options" \"$build_directory\"
+        meson $meson_args "$build_directory"
         print_status $package "INFO" "Building"
         meson compile -C "$build_directory"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
@@ -834,7 +889,6 @@ install_meson() {
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
-    export LDFLAGS="$restore_ldflags"
 }
 
 install_prebuilt() {
@@ -842,44 +896,48 @@ install_prebuilt() {
     local prebuilt_installer="$2"
     local installer_options="$3"
     local source_directory="$4"
-
     if [[ $INSTALL_COMMAND == "install" ]]; then
         if [[ $prebuilt_installer != "" ]]; then
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
-            "${source_directory}/${prebuilt_installer}" "$installer_options"
+            local run_options=( "${(Q)${(z)installer_options}}" )
+            "${source_directory}/${prebuilt_installer}" $run_options
         elif [[ $package == "jdtls" ]]; then
             # based on AUR script
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
-            mkdir -p "$INSTALL_PREFIX/share/java/jdtls"
-            cp -R "${source_directory}/"config_* "${source_directory}/features" "${source_directory}/plugins" "${source_directory}/bin" "$INSTALL_PREFIX/share/java/jdtls"
-            mkdir -p "$INSTALL_PREFIX/bin"
-            ln -fs "$INSTALL_PREFIX/share/java/jdtls/bin/jdtls" "$INSTALL_PREFIX/bin/jdtls"
+            local jdtls_share="$INSTALL_PREFIX/share/java/jdtls"
+            mkdir -p "$jdtls_share" "$INSTALL_PREFIX/bin"
+            cp -R "${source_directory}/"{config_*,features,plugins,bin} "$jdtls_share/"
+            ln -fs "$jdtls_share/bin/jdtls" "$INSTALL_PREFIX/bin/jdtls"
         elif [[ $package == "exiftool" ]]; then
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
-            local PERL_CONFIG_DIR="/Library/Perl/$(perl -e 'printf "%vd", $^V' | cut -d. -f1-2)"
-            cp -rPf "$source_directory/exiftool" "$INSTALL_PREFIX/bin"
-            cp -rPf "$source_directory/lib/" "$PERL_CONFIG_DIR/"
+            local perl_version=$(perl -e 'printf "%vd", $^V' | cut -d. -f1-2)
+            local perl_dest="$INSTALL_PREFIX/lib/perl5/$perl_version"
+            mkdir -p "$INSTALL_PREFIX/bin" "$perl_dest"
+            cp -rPf "$source_directory/exiftool" "$INSTALL_PREFIX/bin/"
+            cp -rPf "$source_directory/lib/"* "$perl_dest/"
         else
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
             local install_dirs=(bin etc include lib libexec man sbin share)
             local install_count=0
-            for install_dir in "${install_dirs[@]}"; do
+            for install_dir in $install_dirs; do
                 if [[ -d "$source_directory/$install_dir" ]]; then
                     cp -rPf "$source_directory/$install_dir" "$INSTALL_PREFIX/"
                     install_count=1
                 fi
             done
             if [[ $package == "zig" ]]; then
+                mkdir -p "$INSTALL_PREFIX/bin"
                 cp -Pf "$source_directory/zig" "$INSTALL_PREFIX/bin/"
                 install_count=1
             fi
             if (( install_count == 0 )); then
                 count_files=( "$source_directory"/*(.N) )
                 if (( ${#count_files} == 1 )); then
+                    mkdir -p "$INSTALL_PREFIX/bin"
                     cp -Pf "$count_files[1]" "$INSTALL_PREFIX/bin/"
                 else
                     print_status $package "WARN" "Not supported"
@@ -893,8 +951,10 @@ install_prebuilt() {
 
 install_pip() {
     local package="$1"
-    local restore_ldflags="$LDFLAGS"
-    export LDFLAGS="$LDFLAGS -Wl,-rpath,\$ORIGIN/../lib"
+    local mode="$2"
+    local version="$3"
+    local extra_url="$4"
+    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib'"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         if [[ $package == "pip" ]]; then
             curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py
@@ -902,19 +962,17 @@ install_pip() {
             rm get-pip.py
         fi
         if [[ $package == "cocotb" ]]; then
-            echo $1 $2 $3 $4 $5
             COCOTB_IGNORE_PYTHON_REQUIRES=1 $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --no-binary :all: --upgrade "$package"
-        elif [[ $2 == "binary" ]]; then
+        elif [[ $mode == "binary" ]]; then
             print_status $package "INFO" "Installing"
             $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"
-        elif [[ $2 == "version" ]]; then
+        elif [[ $mode == "version" ]]; then
             print_status $package "INFO" "Installing"
-            if [[ $4 != "" ]]; then
-                echo $1 $2 $3 $4 $5
-                $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"==$3 --extra-index-url "$4"
+            local install_cmd=( $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade )
+            if [[ -n $extra_url ]]; then
+                $install_cmd "$package==$version" --extra-index-url "$extra_url"
             else
-                echo $1 $2 $3 $4 $5
-                $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade "$package"==$3
+                $install_cmd "$package==$version"
             fi
         else
             print_status $package "INFO" "Compiling"
@@ -927,17 +985,16 @@ install_pip() {
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         fi
     fi
-    export LDFLAGS="$restore_ldflags"
 }
 
 install_luarocks() {
     local package="$1"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Installing"
-        $INSTALL_PREFIX/bin/luarocks install "$package"
+        "$INSTALL_PREFIX/bin/luarocks" install "$package"
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         print_status $package "WARN" "Uninstalling"
-        $INSTALL_PREFIX/bin/luarocks uninstall "$package"
+        "$INSTALL_PREFIX/bin/luarocks" uninstall "$package"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
 }
@@ -948,6 +1005,7 @@ install_cargo() {
     local tool_options="$3"
     local source_directory="$4"
     local build_directory="$5"
+    local -x RUSTFLAGS="-C opt-level=3 -C debuginfo=0 -C rpath=true -C link-arg=-Wl,-rpath,'$ORIGIN/../lib'"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
@@ -956,9 +1014,10 @@ install_cargo() {
         cargo build --release --manifest-path "$source_directory/Cargo.toml"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        cargo install --force --path "$source_directory$source_path" --root $INSTALL_PREFIX
+        cargo install --force --path "${source_directory}${source_path}" --root $INSTALL_PREFIX
         if [[ $package == "helix" ]]; then
             rm -rf "$source_directory/runtime/grammars/sources/"
+            mkdir -p "$INSTALL_PREFIX/libexec/helix/"
             cp -rPf $source_directory/runtime $INSTALL_PREFIX/libexec/helix/
         elif [[ $package == "vhdl_ls" ]]; then
             mkdir -p $INSTALL_PREFIX/lib/rust_hdl/
@@ -975,6 +1034,7 @@ install_zig() {
     local tool_options="$3"
     local source_directory="$4"
     local build_directory="$5"
+    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib'"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
@@ -983,7 +1043,7 @@ install_zig() {
         zig build -Doptimize=ReleaseFast --build-file "$source_directory/build.zig" --cache-dir "$build_directory/zig-cache"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        zig build -Doptimize=ReleaseFast  --build-file "$source_directory/build.zig"  --cache-dir "$build_directory/zig-cache" install -p "$INSTALL_PREFIX"
+        zig build -Doptimize=ReleaseFast --build-file "$source_directory/build.zig" --cache-dir "$build_directory/zig-cache" install -p "$INSTALL_PREFIX"
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
@@ -991,10 +1051,11 @@ install_zig() {
 
 install_npm() {
     local package="$1"
+    local npm_package="$2"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         if command -v deno >/dev/null 2>&1; then
             print_status $package "INFO" "Installing"
-            deno install --global --allow-all --name $package --root "$INSTALL_PREFIX" npm:$2
+            deno install --global --allow-all --name $package --root "$INSTALL_PREFIX" "npm:$npm_package"
         fi
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         print_status $package "WARN" "Uninstalling"
@@ -1011,25 +1072,31 @@ install_custom_x265() {
     local build_directory="$3"
 
     if [[ $INSTALL_COMMAND == "install" ]]; then
-        print_status $package "INFO" "Configuring"
-        cmake_options="-Wno-dev -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib -DCMAKE_BUILD_TYPE=Release"
-
+        print_status $package "INFO" "Configuring (12)"
+        local cmake_options=(
+            "-Wno-dev"
+            "-DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX"
+            '-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib'
+            "-DCMAKE_BUILD_TYPE=Release"
+        )
         mkdir -p "$build_directory/main12"
         cd "$build_directory/main12"
-        eval "cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DMAIN12=ON \"$source_directory\""
-        print_status $package "INFO" "Building"
+        cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DMAIN12=ON "$source_directory"
+        print_status $package "INFO" "Building (12)"
         cmake --build . --parallel=$CONCURRENT_JOBS
 
+        print_status $package "INFO" "Configuring (10)"
         mkdir -p "$build_directory/main10"
         cd "$build_directory/main10"
-        eval "cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DENABLE_HDR10_PLUS=ON \"$source_directory\""
-        print_status $package "INFO" "Building"
+        cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DENABLE_HDR10_PLUS=ON "$source_directory"
+        print_status $package "INFO" "Building (10)"
         cmake --build . --parallel=$CONCURRENT_JOBS
 
+        print_status $package "INFO" "Configuring (Main)"
         mkdir -p "$build_directory/main"
         cd "$build_directory/main"
-        eval "cmake $cmake_options -DLINKED_12BIT=ON -DLINKED_10BIT=ON -DEXTRA_LINK_FLAGS=-L. -DEXTRA_LIB=\"x265_main10.a;x265_main12.a\" \"$source_directory\""
-        print_status $package "INFO" "Building"
+        cmake $cmake_options -DLINKED_12BIT=ON -DLINKED_10BIT=ON -DEXTRA_LINK_FLAGS=-L. "-DEXTRA_LIB=x265_main10.a;x265_main12.a" "$source_directory"
+        print_status $package "INFO" "Building (Main)"
         cmake --build . --parallel=$CONCURRENT_JOBS
 
         mv "$build_directory/main12/libx265.a" "$build_directory/main/libx265_main12.a"
@@ -1049,16 +1116,31 @@ install_custom_x265() {
 }
 
 install_custom_depot_tools() {
+    local package="$1"
     print_status $package "INFO" "No install"
 }
 
 install_package() {
-    local package=$1
+    local package="$1"
+    local kind="$2"
+    local alt_options="$3"
+    local config_options="$4"
+    local extra_param="$5"
+    local download_command="$6"
+    local download_url="$7"
+    local download_arg="$8"
+    local use_etag=$9
+    local use_strip=${10}
+    local download_tag=${11}
     local skip_time=$SKIPTIME
-    # package-name, kind, alternative/alt-options, config-options, source-directory, download-command, url, filename/branch, etag (https), strip (https-extract), tag
-    # for install_pip 5=extra url (source_directory must not be used)
-    local source_directory="${SOURCES_DIRECTORY}/${package%_bootstrap}${5}"
+
+    local base_package="${package%(_bootstrap|_stage_1|_stage_2)}"
+    local source_directory="${SOURCES_DIRECTORY}/${base_package}"
     local build_directory="${BUILDS_DIRECTORY}/${package}"
+
+    if [[ $kind != "pip" ]]; then
+        source_directory="${source_directory}${extra_param}"
+    fi
 
     if [[ -f "$MANIFEST_DIRECTORY/${package}.pre-manifest" ]]; then
         print_status $package "WARN" "Previously incomplete"
@@ -1079,39 +1161,43 @@ install_package() {
     fi
 
     if (( $(( $(date +%s) - last_completion )) > $skip_time )); then
-        find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
-        download "$package" "$6" "$7" "$8" "$9" "$10" "$11"
-        pre_patch "$package" "$source_directory"
+        if [[ $package == $base_package ]]; then
+            find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
+        else
+            find "$BOOTSTRAP_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
+        fi
+        download "$base_package" "$download_command" "$download_url" "$download_arg" "$use_etag" "$use_strip" "$download_tag"
+        pre_patch "$base_package" "$source_directory"
         if [[ -d "$build_directory" ]]; then rm -rf $build_directory; fi
         case "$2" in
             configure)
-                install_configure "$package" "$3" "$4" "$source_directory" "$build_directory"
+                install_configure "$package" "$alt_options" "$config_options" "$source_directory" "$build_directory"
                 ;;
             configure_in_source)
-                install_configure "$package" "$3" "$4" "$source_directory" ""
+                install_configure "$package" "$alt_options" "$config_options" "$source_directory" ""
                 ;;
             make_only)
-                install_make_only "$package" "$3" "$4" "$source_directory"
+                install_make_only "$package" "$alt_options" "$config_options" "$source_directory"
                 ;;
             cmake)
-                install_cmake "$package" "$4" "$source_directory" "$build_directory"
+                install_cmake "$package" "$config_options" "$source_directory" "$build_directory"
                 ;;
             meson)
-                install_meson "$package" "$4" "$source_directory" "$build_directory"
+                install_meson "$package" "$config_options" "$source_directory" "$build_directory"
                 ;;
             pip)
-                install_pip "$package" "$3" "$4" "$5"
+                install_pip "$package" "$alt_options" "$config_options" "$extra_param"
                 ;;
             cargo)
-                install_cargo "$package" "$3" "$4" "$source_directory" "$build_directory"
+                install_cargo "$package" "$alt_options" "$config_options" "$source_directory" "$build_directory"
                 ;;
             zig)
-                install_zig "$package" "$3" "$4" "$source_directory" "$build_directory"
+                install_zig "$package" "$alt_options" "$config_options" "$source_directory" "$build_directory"
                 ;;
             swift)
                 ;;
             npm)
-                install_npm "$package" "$3" "$4" "$5"
+                install_npm "$package" "$alt_options"
                 ;;
             luarocks)
                 install_luarocks "$package"
@@ -1119,7 +1205,7 @@ install_package() {
             scons)
                 ;;
             prebuilt)
-                install_prebuilt "$package" "$3" "$4" "$source_directory"
+                install_prebuilt "$package" "$alt_options" "$config_options" "$source_directory"
                 ;;
             custom)
                 install_custom_$package "$package" "$source_directory" "$build_directory"
@@ -1127,9 +1213,13 @@ install_package() {
         esac
         if [[ $INSTALL_COMMAND != "remove" ]]; then
             print_status $package "INFO" "Manifesting"
-            find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/$package.post-manifest"
+            if [[ $package == $base_package ]]; then
+                find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/$package.post-manifest"
+            else
+                find "$BOOTSTRAP_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/$package.post-manifest"
+            fi
             comm -13 "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest" >> "$MANIFEST_DIRECTORY/$package.manifest"
-            rm "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest"
+            rm -f "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest"
             if [[ $CREATE_XZ == ON ]]; then
                 create_archive $package "$MANIFEST_DIRECTORY/$package.manifest"
             fi
@@ -1140,32 +1230,8 @@ install_package() {
         print_status $package "WARN" "Skipping"
     fi
 
-    post_patch "$package"
+    post_patch "$base_package"
 
-    spinner off
-    print_status $package "DONE" "Completed"
-}
-
-install_certs() {
-    local package="certs"
-    local source_directory="${SOURCES_DIRECTORY}"
-    print_status $package "INFO" "Preparing"
-    spinner on
-    if [[ $INSTALL_COMMAND == "remove" ]]; then
-        uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
-    elif [[ -f "$INSTALL_ROOT_CERTS" ]]; then
-        print_status $package "WARN" "Skipping"
-    elif [[ $INSTALL_COMMAND == "install" ]]; then
-        /usr/bin/security export -k /System/Library/Keychains/SystemRootCertificates.keychain -t certs -p  > "$source_directory/keychain_root_certs.pem"
-        print_status $package "INFO" "Installing"
-        find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
-        mkdir -p "$INSTALL_CERTS_DIRECTORY"
-        cp "$source_directory/keychain_root_certs.pem" "$INSTALL_ROOT_CERTS"
-        print_status $package "INFO" "Manifesting"
-        find "$INSTALL_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/$package.post-manifest"
-        comm -13 "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest" >> "$MANIFEST_DIRECTORY/$package.manifest"
-        rm "$MANIFEST_DIRECTORY/$package.pre-manifest" "$MANIFEST_DIRECTORY/$package.post-manifest"
-    fi
     spinner off
     print_status $package "DONE" "Completed"
 }
@@ -1286,6 +1352,24 @@ pre_patch() {
                 sed -i '' 's/X509 \*cert = OSSL_STORE_INFO_get0_CERT/;\n            X509 *cert = OSSL_STORE_INFO_get0_CERT/g' "$source_directory/libraries/libldap/tls_o.c"
                 sed -i '' 's/X509_STORE \*store = SSL_CTX_get_cert_store/;\n            X509_STORE *store = SSL_CTX_get_cert_store/g' "$source_directory/libraries/libldap/tls_o.c"
                 sed -i '' 's/X509_STORE \*x509_s = SSL_CTX_get_cert_store/;\n            X509_STORE *x509_s = SSL_CTX_get_cert_store/g' "$source_directory/libraries/libldap/tls_o.c"
+                ;;
+            z3)
+                sed -i '' 's/str.starts_with(\(.*\))/(str.rfind(\1, 0) == 0)/g' "$source_directory/src/solver/smt_logics.cpp"
+                ;;
+            llvm)
+                sed -i '' 's/defined(__FreeBSD__)/defined(__FreeBSD__) || defined(__DragonFly__)/g' \
+                    "$source_directory/../libcxx/include/__config" \
+                    "$source_directory/../libcxx/include/__locale" \
+                    "$source_directory/../libcxx/include/__locale_dir/locale_base_api.h" \
+                    "$source_directory/../libcxx/src/locale.cpp" \
+                    "$source_directory/../compiler-rt/lib/sanitizer_common/sanitizer_platform.h"
+
+                sed -i '' \
+                    -e 's/if(Z3_INCLUDE_DIR AND Z3_LIBRARIES AND NOT CMAKE_CROSSCOMPILING)/if(false)/' \
+                    -e 's/(CMAKE_CROSSCOMPILING AND Z3_INCLUDE_DIR/(Z3_INCLUDE_DIR/' \
+                    "$source_directory/cmake/modules/FindZ3.cmake"
+                sed -i '' 's/set(Z3_VERSION_STRING "0.0.0")/set(Z3_VERSION_STRING "4.15.0")/g' "$source_directory/cmake/modules/FindZ3.cmake"
+                ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
@@ -1303,10 +1387,6 @@ post_patch() {
                 print_status $package "INFO" "Sym-linking"
                 ln -sf $INSTALL_PREFIX/bin/pkgconf $INSTALL_PREFIX/bin/pkg-config
                 ln -sf $INSTALL_PREFIX/share/man/man1/pkgconf $INSTALL_PREFIX/share/man/man1/pkg-config.1
-                ;;
-            gnufortran)
-                print_status $package "INFO" "Sym-linking"
-                ln -sf $INSTALL_PREFIX/bin/gnufortran $INSTALL_PREFIX/bin/gfortran
                 ;;
             pocketsphinx)
                 cp $INSTALL_PREFIX/include/pocketsphinx.h $INSTALL_PREFIX/include/pocketsphinx/
@@ -1376,8 +1456,12 @@ main() {
         export LDFLAGS="-L$INSTALL_PREFIX/lib ${LDFLAGS:-}"
         export LDXXFLAGS="${LDFLAGS:-}"
         # export LD_LIBRARY_PATH="$INSTALL_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        export JAVA_HOME=$(java -XshowSettings:properties -version 2>&1 > /dev/null | grep 'java.home' | awk '{print $3}')
-        export RUSTFLAGS="-C opt-level=3 -C debuginfo=0 -C rpath=true -C link-arg=-Wl,-rpath,\$ORIGIN/../lib"
+        # export JAVA_HOME=$(java -XshowSettings:properties -version 2>&1 > /dev/null | grep 'java.home' | awk '{print $3}')
+
+        if ! command -v md5sum >/dev/null 2>&1; then
+            ln -s /sbin/md5 /usr/local/bin/md5sum
+        fi
+
 
         # m4 (builtin old) -
         install_package "m4" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/m4/" "m4-latest.tar.xz" "YES" "YES"
@@ -1398,7 +1482,7 @@ main() {
         install_package "automake" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/automake/" "automake-1.18.1.tar.xz" "YES" "YES"
 
         # pkgconf - (autoconf, automake, libtool) or meson
-        install_package "pkgconf" "configure" "./autogen.sh" "--with-system-libdir=/usr/lib --with-system-includedir=/usr/include" "" "git" "https://github.com/pkgconf/pkgconf.git" "master" "YES" "YES" "pkgconf-2.3.0"
+        install_package "pkgconf" "configure" "autogen.sh" "--with-system-libdir=/usr/lib --with-system-includedir=/usr/include" "" "git" "https://github.com/pkgconf/pkgconf.git" "master" "YES" "YES" "pkgconf-2.3.0"
         install_builtin_pc
         export PKG_CONFIG_PATH="$INSTALL_PREFIX/lib/pkgconfig:$INSTALL_PREFIX/share/pkgconfig"
         export PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1
@@ -1406,6 +1490,9 @@ main() {
 
         # gnumake (versioned)
         install_package "gnumake" "configure" "" "--program-prefix=gnu" "" "https" "https://ftp.gnu.org/gnu/make/" "make-4.4.1.tar.lz" "YES" "YES"
+
+        # patchelf
+        install_package "patchelf" "configure" "" "" "" "git" "https://github.com/NixOS/patchelf.git" "master" "YES" "YES"
 
         # ncurses (versioned) - reinstall because of old version included
         install_package "ncurses" "configure" "" \
@@ -1446,10 +1533,10 @@ main() {
         install_package "texinfo" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/texinfo/" "texinfo-7.2.tar.xz" "YES" "YES"
 
         # gdbm -
-        install_package "gdbm" "configure_in_source" "./autogen.sh" "--enable-libgdbm-compat --without-readline" "" "git" "https://git.savannah.gnu.org/git/gdbm.git" "master" "YES" "YES"
+        install_package "gdbm" "configure_in_source" "autogen.sh" "--enable-libgdbm-compat --without-readline" "" "git" "https://git.savannah.gnu.org/git/gdbm.git" "master" "YES" "YES"
 
         # libuv
-        install_package "libuv" "configure" "./autogen.sh" "--disable-static" "" "git" "https://github.com/libuv/libuv.git" "v1.x" "YES" "YES"
+        install_package "libuv" "configure" "autogen.sh" "--disable-static" "" "git" "https://github.com/libuv/libuv.git" "v1.x" "YES" "YES"
 
         # cmake - bz2 (builtin), zlib (builtin), curl (builtin), ncurses (builtin), sphinx (defer)
         install_package "cmake" "configure" "./bootstrap" "--parallel=$CONCURRENT_JOBS --system-zlib --system-bzip2 --system-curl --system-libarchive --system-libuv --bootstrap-system-libuv -- -DCMake_BUILD_LTO=ON -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -Wno-dev" "" "git" "https://gitlab.kitware.com/cmake/cmake.git" "release" "YES" "YES"
@@ -1458,11 +1545,23 @@ main() {
         install_package "ninja" "cmake" "" "-DBUILD_TESTING=OFF" "" "git" "https://github.com/ninja-build/ninja.git" "release" "YES" "YES"
 
         # llvm_bootstrap - python
+        # Uses GCC to build clang and lld
         install_package "llvm_bootstrap" "cmake" "" \
             " \
                 -DLLVM_ENABLE_PROJECTS='clang;lld' \
-                -DLLVM_ENABLE_RUNTIMES='libcxx;libcxxabi' \
-                -DLLVM_TARGETS_TO_BUILD='X86' \
+                -DLLVM_TARGETS_TO_BUILD='Native' \
+                -DLLVM_INCLUDE_BENCHMARKS=OFF \
+                -DLLVM_INCLUDE_DOCS=OFF \
+                -DLLVM_INCLUDE_EXAMPLES=OFF \
+                -DLLVM_INCLUDE_TESTS=OFF \
+                -DLLVM_ENABLE_EH=OFF \
+                -DLLVM_ENABLE_LIBCXX=OFF \
+                -DLLVM_ENABLE_LIBXML2=OFF \
+                -DLLVM_ENABLE_Z3_SOLVER=OFF \
+                -DLLVM_PARALLEL_LINK_JOBS=2 \
+                -DCLANG_DEFAULT_CXX_STDLIB=libstdc++ \
+                -DCLANG_ENABLE_STATIC_ANALYZER=OFF \
+                -DCLANG_ENABLE_ARCMT=OFF \
             " "/llvm" "git" "https://github.com/llvm/llvm-project.git" "release/21.x" "YES" "YES"
 
         export CC="$BOOTSTRAP_PREFIX/bin/clang"
@@ -1472,66 +1571,50 @@ main() {
         export NM="$BOOTSTRAP_PREFIX/bin/llvm-nm"
         export RANLIB="$BOOTSTRAP_PREFIX/bin/llvm-ranlib"
 
-        export OLD_CXXFLAGS="$CXXFLAGS"
-        export OLD_LDFLAGS="$LDFLAGS"
-        export CXXFLAGS="-stdlib=libc++ -I$BOOTSTRAP_PREFIX/include/c++/v1"
-        export LDFLAGS="-L$BOOTSTRAP_PREFIX/lib -Wl,-rpath,$BOOTSTRAP_PREFIX/lib -lc++ -lc++abi"
+        export LDFLAGS="$LDFLAGS -fuse-ld=lld"
 
         # z3 - cmake, python, llvm_bootstrap, gmp (defer)
-        install_package "z3" "cmake" "" "-DBUILD_SHARED_LIBS=OFF -DZ3_BUILD_PYTHON_BINDINGS=TRUE -DZ3_INSTALL_PYTHON_BINDINGS=TRUE -DZ3_BUILD_JAVA_BINDINGS=FALSE -DZ3_INSTALL_JAVA_BINDINGS=FALSE" "" "git" "https://github.com/Z3Prover/z3.git" "master" "YES" "YES"
+        install_package "z3" "cmake" "" \
+            " \
+                -DZ3_BUILD_PYTHON_BINDINGS=FALSE \
+                -DZ3_INSTALL_PYTHON_BINDINGS=FALSE \
+                -DZ3_BUILD_JAVA_BINDINGS=FALSE \
+                -DZ3_INSTALL_JAVA_BINDINGS=FALSE \
+                -DZ3_BUILD_LIBZ3_SHARED=OFF \
+                -DZ3_ENABLE_EXAMPLE_TARGETS=OFF \
+                -DZ3_USE_LIB_GMP=OFF \
+            " "" "git" "https://github.com/Z3Prover/z3.git" "master" "YES" "YES"
+
+        export TEMP_LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
+        export LD_LIBRARY_PATH="$BUILDS_DIRECTORY/llvm/lib:$BOOTSTRAP_PREFIX/lib:$LD_LIBRARY_PATH"
 
         # llvm - python, llvm_bootstrap
+        # final stage (not added lldb)
         install_package "llvm" "cmake" "" \
             " \
-                -DLLVM_ENABLE_PROJECTS='bolt;clang;clang-tools-extra;cross-project-tests;flang;libc;libclc;lld;lldb;mlir;openmp;polly' \
-                -DLLVM_ENABLE_RUNTIMES='compiler-rt;flang-rt;libcxx;libcxxabi;libunwind' \
-                -DLLVM_TARGETS_TO_BUILD='X86' \
+                -DLLVM_ENABLE_PROJECTS='clang;clang-tools-extra;flang;lld;mlir;polly;openmp' \
+                -DLLVM_ENABLE_RUNTIMES='compiler-rt;flang-rt;libclc' \
+                -DLLVM_TARGETS_TO_BUILD='Native' \
                 -DLLVM_ENABLE_LTO=Thin \
-                -DLLVM_PARALLEL_LINK_JOBS=2 \
-                -DLLVM_POLLY_LINK_INTO_TOOLS=ON \
-                -DLLVM_BUILD_EXTERNAL_COMPILER_RT=ON \
+                -DLLVM_USE_LINKER=lld \
                 -DLLVM_LINK_LLVM_DYLIB=ON \
                 -DLLVM_ENABLE_EH=OFF \
                 -DLLVM_ENABLE_FFI=ON \
-                -DLLVM_ENABLE_RTTI=ON \
                 -DLLVM_INCLUDE_DOCS=OFF \
                 -DLLVM_INCLUDE_TESTS=OFF \
                 -DLLVM_INSTALL_UTILS=ON \
-                -DLLVM_ENABLE_LIBCXX=ON \
                 -DLLVM_ENABLE_Z3_SOLVER=ON \
                 -DLLVM_OPTIMIZED_TABLEGEN=ON \
-                -DLLVM_USE_LINKER=lld \
-                -DLLVM_USE_RELATIVE_PATHS_IN_FILES=ON \
-                -DLLDB_USE_SYSTEM_DEBUGSERVER=ON \
-                -DLLDB_ENABLE_PYTHON=ON \
-                -DLLDB_ENABLE_LUA=OFF \
-                -DLLDB_ENABLE_LZMA=ON \
                 -DLIBOMP_INSTALL_ALIASES=OFF \
-                -DLIBCXX_INSTALL_MODULES=ON \
-                -DLIBCXX_ENABLE_STATIC_ABI_LIBRARY=ON \
-                -DLIBCXX_STATICALLY_LINK_ABI_IN_SHARED_LIBRARY=OFF \
-                -DLIBCXX_STATICALLY_LINK_ABI_IN_STATIC_LIBRARY=ON \
-                -DLIBCXX_USE_COMPILER_RT=ON \
-                -DLIBCXX_HAS_ATOMIC_LIB=OFF \
-                -DLIBCXXABI_ENABLE_STATIC_UNWINDER=ON \
-                -DLIBCXXABI_STATICALLY_LINK_UNWINDER_IN_SHARED_LIBRARY=OFF \
-                -DLIBCXXABI_STATICALLY_LINK_UNWINDER_IN_STATIC_LIBRARY=ON \
-                -DLIBCXXABI_USE_COMPILER_RT=ON \
-                -DLIBCXXABI_USE_LLVM_UNWINDER=ON \
-                -DLIBUNWIND_USE_COMPILER_RT=ON \
-                -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON \
-                -DCOMPILER_RT_USE_LLVM_UNWINDER=ON \
-                -DCLANG_FORCE_MATCHING_LIBCLANG_SOVERSION=OFF \
+                -DLLVM_ENABLE_LIBXML2=OFF \
+                -DLLVM_ENABLE_LIBCXX=OFF \
                 -DCLANG_DEFAULT_CXX_STDLIB=libstdc++ \
-                -DCLANG_DEFAULT_LINKER=lld \
-                -DCMAKE_C_COMPILER=$BOOTSTRAP_PREFIX/bin/clang \
-                -DCMAKE_CXX_COMPILER=$BOOTSTRAP_PREFIX/bin/clang++ \
-                -DCMAKE_RANLIB=$BOOTSTRAP_PREFIX/bin/llvm-ranlib \
-                -DCMAKE_AR=$BOOTSTRAP_PREFIX/bin/llvm-ar \
+                -DLLVM_PARALLEL_LINK_JOBS=2 \
+                -DPACKAGE_VENDOR=\"DragonFlyBSD\" \
+                -DCLANG_VENDOR_UTI=\"org.dragonflybsd\" \
                 -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
                 -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON \
-                -DSANITIZER_CXX_ABI=libc++ \
-                -DSANITIZER_TEST_CXX=libc++ \
+                -DRUNTIMES_CMAKE_ARGS=\"-DCMAKE_C_FLAGS=${CFLAGS} -DCMAKE_CXX_FLAGS=${CXXFLAGS} -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON\" \
             " "/llvm" "git" "https://github.com/llvm/llvm-project.git" "release/21.x" "YES" "YES"
 
         export CC="$INSTALL_PREFIX/bin/clang"
@@ -1540,9 +1623,10 @@ main() {
         export AR="$INSTALL_PREFIX/bin/llvm-ar"
         export NM="$INSTALL_PREFIX/bin/llvm-nm"
         export RANLIB="$INSTALL_PREFIX/bin/llvm-ranlib"
-        export LDFLAGS="$OLD_LDFLAGS -fuse-ld=lld"
-        export CFLAGS="$CFLAGS -flto=thin"
-        export CXXFLAGS="$OLD_CXXFLAGS -stdlib=libc++ -flto=thin"
+
+        export LD_LIBRARY_PATH="$TEMP_LD_LIBRARY_PATH"
+        # set_rpath "$MANIFEST_DIRECTORY/llvm.manifest"
+        uninstall_manifested "llvm_bootstrap" "$MANIFEST_DIRECTORY/llvm_bootstrap.manifest" "YES"
 
         # libtommath - cmake, libtool
         install_package "libtommath" "cmake" "" "" "" "git" "https://github.com/libtom/libtommath.git" "develop" "YES" "YES"
@@ -1630,6 +1714,8 @@ main() {
         fi
         export SCRIPT_PYTHONPATH="$INSTALL_PREFIX/bin"
         export SSL_CERT_DIR=$INSTALL_CERTS_DIRECTORY
+
+        uninstall_manifested "cpython_bootstrap" "$MANIFEST_DIRECTORY/cpython_bootstrap.manifest" "YES"
 
         # pip (only upgrade) - cpython
         if [[ $INSTALL_COMMAND == "install" ]]; then
