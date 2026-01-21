@@ -437,13 +437,13 @@ EOF
     fi
 
     # expat should change to /usr/local/...
-    if [[ -f /usr/lib/libexpat.so ]] && [[ -f /usr/include/expat.h ]]; then
-        local expat_major=$(grep '#define XML_MAJOR_VERSION' /usr/include/expat.h | awk '{print $3}')
-        local expat_minor=$(grep '#define XML_MINOR_VERSION' /usr/include/expat.h | awk '{print $3}')
-        local expat_micro=$(grep '#define XML_MICRO_VERSION' /usr/include/expat.h | awk '{print $3}')
+    if [[ -f /usr/local/lib/libexpat.so ]] && [[ -f /usr/local/include/expat.h ]]; then
+        local expat_major=$(grep '#define XML_MAJOR_VERSION' /usr/local/include/expat.h | awk '{print $3}')
+        local expat_minor=$(grep '#define XML_MINOR_VERSION' /usr/local/include/expat.h | awk '{print $3}')
+        local expat_micro=$(grep '#define XML_MICRO_VERSION' /usr/local/include/expat.h | awk '{print $3}')
         local expat_version="${expat_major:-2}.${expat_minor:-5}.${expat_micro:-0}"
         cat > "$pc_dir/expat.pc" << EOF
-prefix=/usr
+prefix=/usr/local
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
 includedir=\${prefix}/include
@@ -1571,6 +1571,10 @@ pre_patch() {
                 #sed -i '' "s|#include <cmath>|#include <cmath>\n#define isinf __builtin_isinf\n#define isnan __builtin_isnan|" "$source_directory/scipy/spatial/ckdtree/src/ckdtree_decl.h"
                 #sed -i '' -e '/using std::isinf;/d' -e '/using std::isnan;/d' -e 's/std::isinf/isinf/g' -e 's/std::isnan/isnan/g' $source_directory/scipy/spatial/ckdtree/src/*.cxx
                 ;;
+            p11-kit)
+                sed -i '' '1s/^/int issetugid(void);\n/' "$source_directory/common/compat.c"
+                sed -i '' "1s|^|#include <string.h>\n#include <locale.h>\n#include <xlocale.h>\n|" "$source_directory/common/message.c"
+                ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
@@ -2531,7 +2535,7 @@ main() {
 
         # unbound
         local var_options=(
-            "--with-libexpat"
+            "--with-libexpat=$INSTALL_PREFIX"
             "--with-libevent"
         )
         install_package "unbound" "configure" "" "var_options" "" "git" "https://github.com/NLnetLabs/unbound.git" "master" "YES" "YES"
