@@ -814,7 +814,11 @@ install_configure() {
             ln -sf $INSTALL_PREFIX/bin/gnumake /storage/temporary/stage/bin/gmake
         fi
         print_status $package "INFO" "Building"
-        $make_cmd -j$CONCURRENT_JOBS
+        if [[ $base_package == "flite" ]]; then
+            $make_cmd
+        else
+            $make_cmd -j$CONCURRENT_JOBS
+        fi
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
         if [[ $package == "john" ]]; then
@@ -1472,6 +1476,7 @@ pre_patch() {
                 print_status $package "INFO" "Patching"
                 sed -i '' "s|/proc/cpuinfo|/dev/null|g" "${2}/configure"
                 sed -i '' "s|/proc/cpuinfo|/dev/null|g" "${2}/configure.in"
+                sed -i '' "s|CP_FLAGS='-pd'|CP_FLAGS='-pP'|g" "$source_directory/main/Makefile"
                 ;;
             snort)
                 print_status $package "INFO" "Patching"
@@ -1487,27 +1492,33 @@ pre_patch() {
                 sed -i '' '/requires_private/d' "${2}/src/meson.build"
                 ;;
             dia)
+                print_status $package "INFO" "Patching"
                 sed -i '' 's/finite(/isfinite(/g' "$source_directory/lib/arrows.c"
                 ;;
             john)
+                print_status $package "INFO" "Patching"
                 sed -i '' 's/#define JOHN_SYSTEMWIDE 0/#define JOHN_SYSTEMWIDE 1/g' "$source_directory/params.h"
                 sed -i '' 's/#define JOHN_SYSTEMWIDE_EXEC.*/#define JOHN_SYSTEMWIDE_EXEC $INSTALL_PREFIX\/bin/g' "$source_directory/params.h"
                 sed -i '' 's/#define JOHN_SYSTEMWIDE_HOME.*/#define JOHN_SYSTEMWIDE_HOME $INSTALL_PREFIX\/share\/john/g' "$source_directory/params.h"
                 ;;
             krb5)
+                print_status $package "INFO" "Patching"
                 sed -i '' 's/freebsd\*)/freebsd* | *-*-dragonfly*)/g' "$source_directory/config/shlib.conf"
                 perl -i -pe 'print "#include <sys/socket.h>\n" if $. == 1' "$source_directory/include/gssrpc/rpc.h"
                 sed -i '' 's/ENODATA/ENOATTR/g' "$source_directory/lib/krad/packet.c"
                 ;;
             openldap)
+                print_status $package "INFO" "Patching"
                 sed -i '' 's/X509 \*cert = OSSL_STORE_INFO_get0_CERT/;\n            X509 *cert = OSSL_STORE_INFO_get0_CERT/g' "$source_directory/libraries/libldap/tls_o.c"
                 sed -i '' 's/X509_STORE \*store = SSL_CTX_get_cert_store/;\n            X509_STORE *store = SSL_CTX_get_cert_store/g' "$source_directory/libraries/libldap/tls_o.c"
                 sed -i '' 's/X509_STORE \*x509_s = SSL_CTX_get_cert_store/;\n            X509_STORE *x509_s = SSL_CTX_get_cert_store/g' "$source_directory/libraries/libldap/tls_o.c"
                 ;;
             z3)
+                print_status $package "INFO" "Patching"
                 sed -i '' 's/str.starts_with(\(.*\))/(str.rfind(\1, 0) == 0)/g' "$source_directory/src/solver/smt_logics.cpp"
                 ;;
             llvm)
+                print_status $package "INFO" "Patching"
                 sed -i '' 's/defined(__FreeBSD__)/defined(__FreeBSD__) || defined(__DragonFly__)/g' \
                     "$source_directory/../libcxx/include/__config" \
                     "$source_directory/../libcxx/include/__locale" \
@@ -1522,21 +1533,26 @@ pre_patch() {
                 sed -i '' 's/set(Z3_VERSION_STRING "0.0.0")/set(Z3_VERSION_STRING "4.15.0")/g' "$source_directory/cmake/modules/FindZ3.cmake"
                 ;;
             rtmpdump)
+                print_status $package "INFO" "Patching"
                 sed -i '' '/^CC=/d' "$source_directory/Makefile"
                 sed -i '' '/^LD=/d' "$source_directory/Makefile"
                 sed -i '' 's/^CFLAGS=.*$/CFLAGS=$(XCFLAGS) $(INC) $(DEF)/' "$source_directory/Makefile"
             	sed -i '' 's/^LDFLAGS=.*$/LDFLAGS=$(XLDFLAGS)/' "$source_directory/Makefile"
                 ;;
             ne)
+                print_status $package "INFO" "Patching"
                 sed -i '' '/cd src/s/; / \&\& /g' "$source_directory/makefile"
                 ;;
             libevent)
+                print_status $package "INFO" "Patching"
                 sed -i '' 's/#define INT_TO_UDATA(x).*/#define INT_TO_UDATA(x) ((void*)(intptr_t)(x))/g' "$source_directory/kqueue.c"
                 ;;
             tmux)
+                print_status $package "INFO" "Patching"
                 perl -i -pe 'print "#include <event.h>\n" if $. == 1' "$source_directory/osdep-dragonfly.c"
                 ;;
             rust-llvm19|rust-llvm20|rust-llvm|rust)
+                print_status $package "INFO" "Patching"
                 local old_checksum=$(sha256 -q "$source_directory/vendor/lzma-sys-0.1.20/build.rs")
                 sed -i '' "s|if !want_static && !msvc && pkg_config::probe_library(\"liblzma\").is_ok() {|println!(\"cargo:rustc-link-search=native=$INSTALL_PREFIX/lib\"); println!(\"cargo:rustc-link-lib=lzma\"); if true {|" "$source_directory/vendor/lzma-sys-0.1.20/build.rs"
                 local new_checksum=$(sha256 -q "$source_directory/vendor/lzma-sys-0.1.20/build.rs")
@@ -1549,12 +1565,14 @@ pre_patch() {
                 # sed -i '' 's|command = "cargo run --release --manifest-path mdbook-spec/Cargo\.toml"|command = "cargo run --release --manifest-path src/doc/reference/mdbook-spec/Cargo.toml"|' "$source_directory/src/doc/reference/book.toml"
                 ;;
             neovim)
+                print_status $package "INFO" "Patching"
                 sed -i '' -e 's/^#if defined(__FreeBSD__)/& || defined(__DragonFly__)/' -e $'/# elif defined(__FreeBSD__)/i\\\n# elif defined(__DragonFly__)\\\n#  define KP_PID(o) o.kp_pid\\\n#  define KP_PPID(o) o.kp_ppid' "$source_directory/src/nvim/os/proc.c"
                 ;;
             gobject-introspection)
                 # sed -i '' "s/'freebsd'/'freebsd', 'dragonfly'/g" "$source_directory/subprojects/libffi/meson.build"
                 ;;
             glib)
+                print_status $package "INFO" "Patching"
                 sed -i '' 's/#elif defined (__FreeBSD__) || defined(__DragonFly__)/#elif defined (__FreeBSD__)/' "$source_directory/glib/glib-unix.c"
                 sed -i '' 's/#elif defined (__GNU__)/#elif defined (__GNU__) || defined(__DragonFly__)/' "$source_directory/glib/glib-unix.c"
                 #sed -i '' 's/defined(__FreeBSD__)/defined(__FreeBSD__) \&\& !defined(__DragonFly__)/g' "$source_directory/glib/glib-unix.c"
@@ -1564,16 +1582,30 @@ pre_patch() {
                 #sed -i '' 's/return g_strdup (kf.kf_path);/return NULL;/' "$source_directory/glib/glib-unix.c"
                 ;;
             gdk-pixbuf)
+                print_status $package "INFO" "Patching"
                 sed -i '' "/extra_args/ s/\[/['-D_SYS_ERRNO_H_'], /" "$source_directory/gdk-pixbuf/meson.build"
                 ;;
             scipy)
+                print_status $package "INFO" "Patching"
                 sed -i '' "s|#include <cmath>|#include <cmath>\nusing std::isinf;\nusing std::isnan;|" "$source_directory/scipy/spatial/ckdtree/src/ckdtree_decl.h"
                 #sed -i '' "s|#include <cmath>|#include <cmath>\n#define isinf __builtin_isinf\n#define isnan __builtin_isnan|" "$source_directory/scipy/spatial/ckdtree/src/ckdtree_decl.h"
                 #sed -i '' -e '/using std::isinf;/d' -e '/using std::isnan;/d' -e 's/std::isinf/isinf/g' -e 's/std::isnan/isnan/g' $source_directory/scipy/spatial/ckdtree/src/*.cxx
                 ;;
             p11-kit)
+                print_status $package "INFO" "Patching"
                 sed -i '' '1s/^/int issetugid(void);\n/' "$source_directory/common/compat.c"
                 sed -i '' "1s|^|#include <string.h>\n#include <locale.h>\n#include <xlocale.h>\n|" "$source_directory/common/message.c"
+                ;;
+            libbluray)
+                print_status $package "INFO" "Patching"
+                sed -i '' '1s/^/#undef _POSIX_C_SOURCE\n#include <sys\/time.h>\n/' "$source_directory/src/util/time.c"
+                ;;
+            mpg123)
+                print_status $package "INFO" "Patching"
+                sed -i '' '1s/^/#include <dlfcn.h>\n/' "$source_directory/src/compat/compat_dl.c"
+                ;;
+            libmodplug)
+                find "$source_directory/src" -name "*.cpp" -exec sed -i '' 's/register //g' {} +
                 ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -2428,8 +2460,11 @@ main() {
         # libyuv - cmake
         install_package "libyuv" "cmake" "" "" "" "git" "https://chromium.googlesource.com/libyuv/libyuv" "main" "YES" "YES"
 
-        # yasm - cmake
+        # yasm -
         install_package "yasm" "configure" "" "" "" "git" "https://github.com/yasm/yasm.git" "master" "YES" "YES"
+
+        # nasm - (maybe we only need nasm)
+        install_package "nasm" "configure_in_source" "" "" "" "https" "https://www.nasm.us/pub/nasm/releasebuilds/3.01/" "nasm-3.01.tar.xz" "YES" "YES"
 
         # aom - cmake, aom
         install_package "aom" "cmake" "" "-DBUILD_SHARED_LIBS=TRUE -DENABLE_TESTDATA=off -DENABLE_TESTS=off" "" "git" "https://aomedia.googlesource.com/aom" "main" "YES" "YES"
@@ -2576,7 +2611,7 @@ main() {
         install_package "lame" "configure" "" "var_options" "" "https" "https://sourceforge.net/projects/lame/files/lame/3.100/" "lame-3.100.tar.gz" "YES" "YES"
 
         # libsndfile
-        install_package "libsndfile" "cmake" "" "" "" "git" "https://github.com/libsndfile/libsndfile.git" "master" "YES" "YES"
+        install_package "libsndfile" "cmake" "" "-DBUILD_SHARED_LIBS=TRUE" "" "git" "https://github.com/libsndfile/libsndfile.git" "master" "YES" "YES"
 
         # libbs2b (versioned)
         #export LDFLAGS="-lmpg123 -lmp3lame"
@@ -2682,7 +2717,7 @@ main() {
         install_package "pyyaml" "pip"
 
         # mesa
-        install_package "mesa" "meson" "" "-Dllvm=disabled -Dshared-llvm=disabled -Dcpp_rtti=false -Dplatforms=macos -Dgallium-drivers=softpipe -Dglx=disabled" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
+        install_package "mesa" "meson" "" "-Dplatforms=auto -Dgallium-drivers=auto -Dglx=auto" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
 
         # libepoxy
         install_package "libepoxy" "meson" "" "-Degl=yes -Dx11=false" "" "git" "https://github.com/mohd-akram/libepoxy.git" "macos-egl" "YES" "YES"
