@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 
 VERSION="1.21"
-SKIPTIME="864000"
+SKIPTIME="1864000"
 SPINNER_INTERVAL=0.4
 SPINNER_PLAIN_INTERVAL=1
 SPINNER_PID=0
@@ -98,13 +98,10 @@ print_status() {
                 base="${1%_bootstrap}"
                 printf "\033[2;5H$FANCY_COLOR_BEGIN Bootstrap %-11s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$base" "$3" > /dev/tty
                 ;;
-            *_stage_1)
-                base="${1%_stage_1}"
-                printf "\033[2;5H$FANCY_COLOR_BEGIN Stage 1 %-11s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$base" "$3" > /dev/tty
-                ;;
-            *_stage_2)
-                base="${1%_stage_2}"
-                printf "\033[2;5H$FANCY_COLOR_BEGIN Stage 2 %-11s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$base" "$3" > /dev/tty
+            *_stage_[0-9]*)
+                stage="${1##*_}"
+                base="${1%_stage_*}"
+                printf "\033[2;5H$FANCY_COLOR_BEGIN Stage %s %-11s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$stage" "$base" "$3" > /dev/tty
                 ;;
             *)
                 printf "\033[2;5H$FANCY_COLOR_BEGIN %-21s $status_color %-21s $FANCY_COLOR_POST  $FANCY_COLOR_TIME ${local_time} $FANCY_COLOR_END\033[2;1H\n" "$1" "$3" > /dev/tty
@@ -246,8 +243,9 @@ replace_rpath() {
 # this has hardcoded /usr/lib/gcc80 which changes with newer dragonflies but hopefully this function will not be necessary
 set_rpath() {
     local manifest="$1"
-    local target_rpath='$ORIGIN/../lib:$INSTALL_PREFIX/lib:/usr/lib/gcc80'
+    local target_rpath='$ORIGIN/../lib:/usr/lib/gcc80'
     local files=( "${(@f)$(< "$manifest")}" )
+    print_status $manifest "INFO" "Updating rpath"
     for f in "${files[@]}"; do
         local current_rpath
         if current_rpath=$(patchelf --print-rpath "$f" 2>/dev/null); then
@@ -321,7 +319,7 @@ setup() {
     INSTALL_ROOT_CERTS="/etc/ssl/cert.pem"
     print -- "Pos $positional_args"
     print -- "Unk $unknown_args"
-    CONCURRENT_JOBS=$(sysctl -n hw.ncpu)
+    CONCURRENT_JOBS=$(( $(sysctl -n hw.ncpu) + 1 ))
     SWD="/storage/temporary"
     MANIFEST_DIRECTORY="$SWD/manifests"
     ARCHIVE_DIRECTORY="$SWD/archives"
@@ -330,10 +328,12 @@ setup() {
     LOGS_DIRECTORY="$SWD/logs"
     BOOTSTRAP_PREFIX="$SWD/bootstrap"
     STAGE_PREFIX="$SWD/stage"
-    mkdir -p "$MANIFEST_DIRECTORY" "$ARCHIVE_DIRECTORY" "$SOURCES_DIRECTORY" "$BUILDS_DIRECTORY" "$LOGS_DIRECTORY" "$BOOTSTRAP_PREFIX" "$STAGE_PREFIX"
+    STAGE2_PREFIX="$SWD/stage2"
+    STAGE3_PREFIX="$SWD/stage3"
+    mkdir -p "$MANIFEST_DIRECTORY" "$ARCHIVE_DIRECTORY" "$SOURCES_DIRECTORY" "$BUILDS_DIRECTORY" "$LOGS_DIRECTORY" "$BOOTSTRAP_PREFIX" "$STAGE3_PREFIX" "$STAGE2_PREFIX" "$STAGE_PREFIX"
     INSTALL_LOG_OUT="$LOGS_DIRECTORY/log_out.log"
     INSTALL_LOG_ERR="$LOGS_DIRECTORY/log_err.log"
-    export PATH="${BOOTSTRAP_PREFIX}/bin:${INSTALL_PREFIX}/bin:${STAGE_PREFIX}/bin:${PATH:-}"
+    export PATH="${BOOTSTRAP_PREFIX}/bin:${INSTALL_PREFIX}/bin:${STAGE3_PREFIX}/bin:${STAGE2_PREFIX}/bin:${STAGE_PREFIX}/bin:${PATH:-}"
     export SCRIPT_PYTHONPATH=$(dirname $(which python3))
     while true; do; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
     if [[ $PLAIN_TEXT == OFF ]]; then
@@ -436,7 +436,7 @@ Cflags: -I\${includedir}
 EOF
     fi
 
-    # expat
+    # expat should change to /usr/local/...
     if [[ -f /usr/lib/libexpat.so ]] && [[ -f /usr/include/expat.h ]]; then
         local expat_major=$(grep '#define XML_MAJOR_VERSION' /usr/include/expat.h | awk '{print $3}')
         local expat_minor=$(grep '#define XML_MINOR_VERSION' /usr/include/expat.h | awk '{print $3}')
@@ -457,10 +457,10 @@ EOF
     fi
 
     # libxml2
-    if [[ -f /usr/lib/libxml2.so ]] && [[ -f /usr/include/libxml2/libxml/xmlversion.h ]]; then
-        local xml2_version=$(grep '#define LIBXML_DOTTED_VERSION' /usr/include/libxml2/libxml/xmlversion.h | cut -d'"' -f2)
+    if [[ -f /usr/local/lib/libxml2.so ]] && [[ -f /usr/local/include/libxml2/libxml/xmlversion.h ]]; then
+        local xml2_version=$(grep '#define LIBXML_DOTTED_VERSION' /usr/local/include/libxml2/libxml/xmlversion.h | cut -d'"' -f2)
         cat > "$pc_dir/libxml-2.0.pc" << EOF
-prefix=/usr
+prefix=/usr/local
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
 includedir=\${prefix}/include/libxml2
@@ -542,6 +542,17 @@ Description: POSIX realtime library (libc)
 Version: 1.0
 Libs:
 Cflags:
+EOF
+
+    # gdk-pixbuf wants this
+    cat > "$pc_dir/shared-mime-info.pc" << EOF
+prefix=/usr/local
+datadir=\${prefix}/share
+datadirs=\${prefix}/share
+
+Name: shared-mime-info
+Description: Dummy shared MIME info
+Version: 2.2
 EOF
 }
 
@@ -644,6 +655,53 @@ download_https() {
             "${url}${filename}"
     fi
 
+    extract_download $package $filename $strip
+}
+
+download_pip() {
+    local package=$1
+    local url=$2
+
+    if [[ $INSTALL_COMMAND == "remove" ]]; then
+        rm -rf "${SOURCES_DIRECTORY}/${package}"
+        return
+    fi
+
+    print_status $package "INFO" "Downloading"
+    $SCRIPT_PYTHONPATH/pip3 download --no-build-isolation --no-deps --no-binary :all: --dest "${SOURCES_DIRECTORY}" $package
+    cd "${SOURCES_DIRECTORY}"
+    local filename=($package-*.*(om[1]))
+    print $filename
+    extract_download $package $filename "YES"
+}
+
+download() {
+    local download_package="$1"
+    # package-name, command, url, filename/branch, etag (https), strip (https-extract), tag
+    case "$2" in
+        git)
+            download_git "$download_package" "$3" "$4" "$7"
+            ;;
+        svn)
+            download_svn "$download_package" "$3" "$4" "$5" "$6"
+            ;;
+        https)
+            download_https "$download_package" "$3" "$4" "$5" "$6"
+            ;;
+        pip)
+            download_pip "$download_package" "$3"
+            ;;
+        none)
+            mkdir -p "${SOURCES_DIRECTORY}/${download_package}"
+            ;;
+    esac
+}
+
+extract_download() {
+    local package=$1
+    local filename=$2
+    local strip=$3
+
     local compressed_mime_types=(
         "application/x-gzip"            # .gz
         "application/gzip"              # .gz
@@ -675,43 +733,28 @@ download_https() {
     fi
 }
 
-download() {
-    local download_package="$1"
-    # package-name, command, url, filename/branch, etag (https), strip (https-extract), tag
-    case "$2" in
-        git)
-            download_git "$download_package" "$3" "$4" "$7"
-            ;;
-        svn)
-            download_svn "$download_package" "$3" "$4" "$5" "$6"
-            ;;
-        https)
-            download_https "$download_package" "$3" "$4" "$5" "$6"
-            ;;
-        none)
-            mkdir -p "${SOURCES_DIRECTORY}/${download_package}"
-            ;;
-    esac
-}
-
 install_configure() {
     local package=$1
     local configure_builder="$2"
     local tool_options="$3"
     local source_directory="$4"
     local build_directory="$5"
-    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib:$INSTALL_PREFIX/lib'"
-    local base_package="${package%(_bootstrap|_stage_1|_stage_2)}"
+    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib:$INSTALL_PREFIX/lib:/usr/lib/gcc80'"
+    local base_package="${package%(_bootstrap|_stage_1|_stage_2|_stage_3)}"
     local make_cmd="make"
     if command -v gnumake >/dev/null 2>&1; then
         make_cmd="gnumake"
     fi
-    if [[ $base_package == "rust-llvm" ]]; then
+    if [[ $base_package == "rust-llvm19" || $base_package == "rust-llvm20" || $base_package == "rust-llvm" ]]; then
         unset CFLAGS
         unset CXXFLAGS
         unset CPPFLAGS
-        # unset LDFLAGS
-        # export RUSTC_BOOTSTRAP=1
+        if [[ $base_package == "rust-llvm19" || $base_package == "rust-llvm20" ]]; then
+            export LDVER=ld.bfd
+        fi
+        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/lib/gcc80:$INSTALL_PREFIX/lib:/usr/local/lib"
+        export LZMA_API_STATIC=0
+        export LIBLZMA_SYSTEM=1
     fi
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
@@ -727,8 +770,12 @@ install_configure() {
             configure_options+=("-Dprefix=$INSTALL_PREFIX")
         elif [[ $package == *_bootstrap ]]; then
             configure_options+=("--prefix=$BOOTSTRAP_PREFIX")
-        elif [[ $package == *(_stage_1|_stage_2) ]]; then
+        elif [[ $package == *_stage_1 ]]; then
             configure_options+=("--prefix=$STAGE_PREFIX")
+        elif [[ $package == *_stage_2 ]]; then
+            configure_options+=("--prefix=$STAGE2_PREFIX")
+        elif [[ $package == *_stage_3 ]]; then
+            configure_options+=("--prefix=$STAGE3_PREFIX")
         else
             configure_options+=("--prefix=$INSTALL_PREFIX")
         fi
@@ -761,6 +808,10 @@ install_configure() {
             if [[ -f "${source_directory}/configure" ]]; then
                 "${source_directory}/configure" $configure_options
             fi
+        fi
+        if [[ $base_package == "rust" ]]; then
+            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/lib/gcc80:$INSTALL_PREFIX/lib:/usr/local/lib"
+            ln -sf $INSTALL_PREFIX/bin/gnumake /storage/temporary/stage/bin/gmake
         fi
         print_status $package "INFO" "Building"
         $make_cmd -j$CONCURRENT_JOBS
@@ -820,8 +871,12 @@ install_make_only() {
             print_status $package "WARN" "Patching"
             if [[ $package == *_bootstrap ]]; then
                 sed -i '' "s|/usr/local|${BOOTSTRAP_PREFIX}${custom_prefix}|g" "$source_directory/Makefile" "$source_directory"/*/Makefile(N)
-            elif [[ $package == *(_stage_1|_stage_2) ]]; then
+            elif [[ $package == *_stage_1 ]]; then
                 sed -i '' "s|/usr/local|${STAGE_PREFIX}${custom_prefix}|g" "$source_directory/Makefile" "$source_directory"/*/Makefile(N)
+            elif [[ $package == *_stage_2 ]]; then
+                sed -i '' "s|/usr/local|${STAGE2_PREFIX}${custom_prefix}|g" "$source_directory/Makefile" "$source_directory"/*/Makefile(N)
+            elif [[ $package == *_stage_3 ]]; then
+                sed -i '' "s|/usr/local|${STAGE3_PREFIX}${custom_prefix}|g" "$source_directory/Makefile" "$source_directory"/*/Makefile(N)
             else
                 sed -i '' "s|/usr/local|${INSTALL_PREFIX}${custom_prefix}|g" "$source_directory/Makefile" "$source_directory"/*/Makefile(N)
             fi
@@ -871,20 +926,24 @@ install_cmake() {
         fi
         if [[ $package == *_bootstrap ]]; then
             cmake_options+=("-DCMAKE_INSTALL_PREFIX=$BOOTSTRAP_PREFIX")
-        elif [[ $package == *(_stage_1|_stage_2) ]]; then
+        elif [[ $package == *_stage_1 ]]; then
             cmake_options+=("-DCMAKE_INSTALL_PREFIX=$STAGE_PREFIX")
+        elif [[ $package == *_stage_2 ]]; then
+            cmake_options+=("-DCMAKE_INSTALL_PREFIX=$STAGE2_PREFIX")
+        elif [[ $package == *_stage_3 ]]; then
+            cmake_options+=("-DCMAKE_INSTALL_PREFIX=$STAGE3_PREFIX")
         else
             cmake_options+=("-DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX")
         fi
         if [[ $package != "ninja" ]]; then
             cmake_options+=("-GNinja")
         fi
-        cmake $cmake_options "$source_directory"
+        $INSTALL_PREFIX/bin/cmake $cmake_options "$source_directory"
         print_status $package "INFO" "Building"
-        cmake --build . --parallel=$CONCURRENT_JOBS
+        $INSTALL_PREFIX/bin/cmake --build . --parallel=$CONCURRENT_JOBS
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        cmake --install .
+        $INSTALL_PREFIX/bin/cmake --install .
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
@@ -912,8 +971,12 @@ install_meson() {
         fi
         if [[ $package == *_bootstrap ]]; then
             meson_options+=( "--prefix=$BOOTSTRAP_PREFIX" )
-        elif [[ $package == *(_stage_1|_stage_2) ]]; then
+        elif [[ $package == *_stage_1 ]]; then
             meson_options+=( "--prefix=$STAGE_PREFIX" )
+        elif [[ $package == *_stage_2 ]]; then
+            meson_options+=( "--prefix=$STAGE2_PREFIX" )
+        elif [[ $package == *_stage_3 ]]; then
+            meson_options+=( "--prefix=$STAGE3_PREFIX" )
         else
             meson_options+=( "--prefix=$INSTALL_PREFIX" )
         fi
@@ -970,8 +1033,12 @@ install_prebuilt() {
                 if [[ -d "$source_directory/$install_dir" ]]; then
                     if [[ $package == *_bootstrap ]]; then
                         cp -rPf "$source_directory/$install_dir" "$BOOTSTRAP_PREFIX/"
-                    elif [[ $package == *(_stage_1|_stage_2) ]]; then
+                    elif [[ $package == *_stage_1 ]]; then
                         cp -rPf "$source_directory/$install_dir" "$STAGE_PREFIX/"
+                    elif [[ $package == *_stage_2 ]]; then
+                        cp -rPf "$source_directory/$install_dir" "$STAGE2_PREFIX/"
+                    elif [[ $package == *_stage_3 ]]; then
+                        cp -rPf "$source_directory/$install_dir" "$STAGE3_PREFIX/"
                     else
                         cp -rPf "$source_directory/$install_dir" "$INSTALL_PREFIX/"
                     fi
@@ -982,9 +1049,15 @@ install_prebuilt() {
                 if [[ $package == *_bootstrap ]]; then
                     mkdir -p "$BOOTSTRAP_PREFIX/bin"
                     cp -Pf "$source_directory/zig" "$BOOTSTRAP_PREFIX/bin/"
-                elif [[ $package == *(_stage_1|_stage_2) ]]; then
+                elif [[ $package == *_stage_1 ]]; then
                     mkdir -p "$STAGE_PREFIX/bin"
                     cp -Pf "$source_directory/zig" "$STAGE_PREFIX/bin/"
+                elif [[ $package == *_stage_2 ]]; then
+                    mkdir -p "$STAGE2_PREFIX/bin"
+                    cp -Pf "$source_directory/zig" "$STAGE2_PREFIX/bin/"
+                elif [[ $package == *_stage_3 ]]; then
+                    mkdir -p "$STAGE3_PREFIX/bin"
+                    cp -Pf "$source_directory/zig" "$STAGE3_PREFIX/bin/"
                 else
                     mkdir -p "$INSTALL_PREFIX/bin"
                     cp -Pf "$source_directory/zig" "$INSTALL_PREFIX/bin/"
@@ -997,9 +1070,15 @@ install_prebuilt() {
                     if [[ $package == *_bootstrap ]]; then
                         mkdir -p "$BOOTSTRAP_PREFIX/bin"
                         cp -Pf "$count_files[1]" "$BOOTSTRAP_PREFIX/bin/"
-                    elif [[ $package == *(_stage_1|_stage_2) ]]; then
+                    elif [[ $package == *_stage_1 ]]; then
                         mkdir -p "$STAGE_PREFIX/bin"
                         cp -Pf "$count_files[1]" "$STAGE_PREFIX/bin/"
+                    elif [[ $package == *_stage_2 ]]; then
+                        mkdir -p "$STAGE2_PREFIX/bin"
+                        cp -Pf "$count_files[1]" "$STAGE2_PREFIX/bin/"
+                    elif [[ $package == *_stage_3 ]]; then
+                        mkdir -p "$STAGE3_PREFIX/bin"
+                        cp -Pf "$count_files[1]" "$STAGE3_PREFIX/bin/"
                     else
                         mkdir -p "$INSTALL_PREFIX/bin"
                         cp -Pf "$count_files[1]" "$INSTALL_PREFIX/bin/"
@@ -1017,13 +1096,14 @@ install_prebuilt() {
 install_pip() {
     local package="$1"
     local mode="$2"
-    local version="$3"
+    local mode_options="$3"
     local extra_url="$4"
+    local source_directory="$5"
     local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib:$INSTALL_PREFIX/lib'"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         if [[ $package == "pip" ]]; then
             curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-            python3 get-pip.py --force-reinstall
+            $INSTALL_PREFIX/bin/python3 get-pip.py --force-reinstall
             rm get-pip.py
         fi
         if [[ $package == "cocotb" ]]; then
@@ -1035,10 +1115,16 @@ install_pip() {
             print_status $package "INFO" "Installing"
             local install_cmd=( $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --upgrade )
             if [[ -n $extra_url ]]; then
-                $install_cmd "$package==$version" --extra-index-url "$extra_url"
+                $install_cmd "$package==$mode_options" --extra-index-url "$extra_url"
             else
-                $install_cmd "$package==$version"
+                $install_cmd "$package==$mode_options"
             fi
+        elif [[ $mode == "local" ]]; then
+            print_status $package "INFO" "Compiling"
+            $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --no-build-isolation "$source_directory"
+        elif [[ $mode == "config" ]]; then
+            print_status $package "INFO" "Compiling"
+            PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $SCRIPT_PYTHONPATH/pip3 install --no-build-isolation --config-settings="$mode_options" --root-user-action ignore --no-binary :all: --upgrade "$package"
         else
             print_status $package "INFO" "Compiling"
             PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $SCRIPT_PYTHONPATH/pip3 install --root-user-action ignore --no-binary :all: --upgrade "$package"
@@ -1070,16 +1156,16 @@ install_cargo() {
     local tool_options="$3"
     local source_directory="$4"
     local build_directory="$5"
-    local -x RUSTFLAGS="-C opt-level=3 -C debuginfo=0 -C rpath=true -C link-arg=-Wl,-rpath,'$ORIGIN/../lib:$INSTALL_PREFIX/lib'"
+    local -x RUSTFLAGS="-C opt-level=3 -C debuginfo=0 -C rpath=true -C link-arg=-fuse-ld=lld -C link-arg=-Wl,-rpath,'$ORIGIN/../lib:$INSTALL_PREFIX/lib'"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
         cd "$build_directory"
         print_status $package "INFO" "Building"
-        cargo build --release --manifest-path "$source_directory/Cargo.toml"
+        $INSTALL_PREFIX/bin/cargo build --release --manifest-path "$source_directory/Cargo.toml"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        cargo install --force --path "${source_directory}${source_path}" --root $INSTALL_PREFIX
+        $INSTALL_PREFIX/bin/cargo install --force --path "${source_directory}${source_path}" --root $INSTALL_PREFIX
         if [[ $package == "helix" ]]; then
             rm -rf "$source_directory/runtime/grammars/sources/"
             mkdir -p "$INSTALL_PREFIX/libexec/helix/"
@@ -1105,10 +1191,10 @@ install_zig() {
         mkdir -p "$build_directory"
         cd "$build_directory"
         print_status $package "INFO" "Building"
-        zig build -Doptimize=ReleaseFast --build-file "$source_directory/build.zig" --cache-dir "$build_directory/zig-cache"
+        $INSTALL_PREFIX/bin/zig build -Doptimize=ReleaseFast --build-file "$source_directory/build.zig" --cache-dir "$build_directory/zig-cache"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        zig build -Doptimize=ReleaseFast --build-file "$source_directory/build.zig" --cache-dir "$build_directory/zig-cache" install -p "$INSTALL_PREFIX"
+        $INSTALL_PREFIX/bin/zig build -Doptimize=ReleaseFast --build-file "$source_directory/build.zig" --cache-dir "$build_directory/zig-cache" install -p "$INSTALL_PREFIX"
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
@@ -1146,23 +1232,23 @@ install_custom_x265() {
         )
         mkdir -p "$build_directory/main12"
         cd "$build_directory/main12"
-        cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DMAIN12=ON "$source_directory"
+        $INSTALL_PREFIX/bin/cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DMAIN12=ON "$source_directory"
         print_status $package "INFO" "Building (12)"
-        cmake --build . --parallel=$CONCURRENT_JOBS
+        $INSTALL_PREFIX/bin/cmake --build . --parallel=$CONCURRENT_JOBS
 
         print_status $package "INFO" "Configuring (10)"
         mkdir -p "$build_directory/main10"
         cd "$build_directory/main10"
-        cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DENABLE_HDR10_PLUS=ON "$source_directory"
+        $INSTALL_PREFIX/bin/cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DENABLE_HDR10_PLUS=ON "$source_directory"
         print_status $package "INFO" "Building (10)"
-        cmake --build . --parallel=$CONCURRENT_JOBS
+        $INSTALL_PREFIX/bin/cmake --build . --parallel=$CONCURRENT_JOBS
 
         print_status $package "INFO" "Configuring (Main)"
         mkdir -p "$build_directory/main"
         cd "$build_directory/main"
-        cmake $cmake_options -DLINKED_12BIT=ON -DLINKED_10BIT=ON -DEXTRA_LINK_FLAGS=-L. "-DEXTRA_LIB=x265_main10.a;x265_main12.a" "$source_directory"
+        $INSTALL_PREFIX/bin/cmake $cmake_options -DLINKED_12BIT=ON -DLINKED_10BIT=ON -DEXTRA_LINK_FLAGS=-L. "-DEXTRA_LIB=x265_main10.a;x265_main12.a" "$source_directory"
         print_status $package "INFO" "Building (Main)"
-        cmake --build . --parallel=$CONCURRENT_JOBS
+        $INSTALL_PREFIX/bin/cmake --build . --parallel=$CONCURRENT_JOBS
 
         mv "$build_directory/main12/libx265.a" "$build_directory/main/libx265_main12.a"
         mv "$build_directory/main10/libx265.a" "$build_directory/main/libx265_main10.a"
@@ -1174,7 +1260,7 @@ install_custom_x265() {
 
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        cmake --install .
+        $INSTALL_PREFIX/bin/cmake --install .
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
@@ -1199,7 +1285,7 @@ install_package() {
     local download_tag=${11}
     local skip_time=$SKIPTIME
 
-    local base_package="${package%(_bootstrap|_stage_1|_stage_2)}"
+    local base_package="${package%(_bootstrap|_stage_1|_stage_2|_stage_3)}"
     local source_directory="${SOURCES_DIRECTORY}/${base_package}"
     local build_directory="${BUILDS_DIRECTORY}/${package}"
 
@@ -1251,7 +1337,7 @@ install_package() {
                 install_meson "$package" "$config_options" "$source_directory" "$build_directory"
                 ;;
             pip)
-                install_pip "$package" "$alt_options" "$config_options" "$extra_param"
+                install_pip "$package" "$alt_options" "$config_options" "$extra_param" "$source_directory"
                 ;;
             cargo)
                 install_cargo "$package" "$alt_options" "$config_options" "$source_directory" "$build_directory"
@@ -1450,8 +1536,40 @@ pre_patch() {
             tmux)
                 perl -i -pe 'print "#include <event.h>\n" if $. == 1' "$source_directory/osdep-dragonfly.c"
                 ;;
-            rust)
-                # perl -i -pe 'print "cargo-features = [\"edition2024\"]\n" if $. == 1' "$source_directory/src/bootstrap/Cargo.toml"
+            rust-llvm19|rust-llvm20|rust-llvm|rust)
+                local old_checksum=$(sha256 -q "$source_directory/vendor/lzma-sys-0.1.20/build.rs")
+                sed -i '' "s|if !want_static && !msvc && pkg_config::probe_library(\"liblzma\").is_ok() {|println!(\"cargo:rustc-link-search=native=$INSTALL_PREFIX/lib\"); println!(\"cargo:rustc-link-lib=lzma\"); if true {|" "$source_directory/vendor/lzma-sys-0.1.20/build.rs"
+                local new_checksum=$(sha256 -q "$source_directory/vendor/lzma-sys-0.1.20/build.rs")
+                sed -i '' "s/$old_checksum/$new_checksum/" "$source_directory/vendor/lzma-sys-0.1.20/.cargo-checksum.json"
+                sed -i '' 's/build_lock\.try_lock()/Ok(())/' "$source_directory/src/bootstrap/src/bin/main.rs"
+                local old_checksum=$(sha256 -q "$source_directory/vendor/notify-8.2.0/Cargo.toml")
+                sed -i '' 's/dragonflybsd/dragonfly/g' "$source_directory/vendor/notify-8.2.0/Cargo.toml"
+                local new_checksum=$(sha256 -q "$source_directory/vendor/notify-8.2.0/Cargo.toml")
+                sed -i '' "s/$old_checksum/$new_checksum/" "$source_directory/vendor/notify-8.2.0/.cargo-checksum.json"
+                # sed -i '' 's|command = "cargo run --release --manifest-path mdbook-spec/Cargo\.toml"|command = "cargo run --release --manifest-path src/doc/reference/mdbook-spec/Cargo.toml"|' "$source_directory/src/doc/reference/book.toml"
+                ;;
+            neovim)
+                sed -i '' -e 's/^#if defined(__FreeBSD__)/& || defined(__DragonFly__)/' -e $'/# elif defined(__FreeBSD__)/i\\\n# elif defined(__DragonFly__)\\\n#  define KP_PID(o) o.kp_pid\\\n#  define KP_PPID(o) o.kp_ppid' "$source_directory/src/nvim/os/proc.c"
+                ;;
+            gobject-introspection)
+                # sed -i '' "s/'freebsd'/'freebsd', 'dragonfly'/g" "$source_directory/subprojects/libffi/meson.build"
+                ;;
+            glib)
+                sed -i '' 's/#elif defined (__FreeBSD__) || defined(__DragonFly__)/#elif defined (__FreeBSD__)/' "$source_directory/glib/glib-unix.c"
+                sed -i '' 's/#elif defined (__GNU__)/#elif defined (__GNU__) || defined(__DragonFly__)/' "$source_directory/glib/glib-unix.c"
+                #sed -i '' 's/defined(__FreeBSD__)/defined(__FreeBSD__) \&\& !defined(__DragonFly__)/g' "$source_directory/glib/glib-unix.c"
+                #sed -i '' 's/struct kinfo_file kf = {0};/int kf = 0;/' "$source_directory/glib/glib-unix.c"
+                #sed -i '' 's/fcntl (fd, F_KINFO, &kf)/fcntl (fd, F_GETFD)/' "$source_directory/glib/glib-unix.c"
+                #sed -i '' '/kf.kf_structsize =/d' "$source_directory/glib/glib-unix.c"
+                #sed -i '' 's/return g_strdup (kf.kf_path);/return NULL;/' "$source_directory/glib/glib-unix.c"
+                ;;
+            gdk-pixbuf)
+                sed -i '' "/extra_args/ s/\[/['-D_SYS_ERRNO_H_'], /" "$source_directory/gdk-pixbuf/meson.build"
+                ;;
+            scipy)
+                sed -i '' "s|#include <cmath>|#include <cmath>\nusing std::isinf;\nusing std::isnan;|" "$source_directory/scipy/spatial/ckdtree/src/ckdtree_decl.h"
+                #sed -i '' "s|#include <cmath>|#include <cmath>\n#define isinf __builtin_isinf\n#define isnan __builtin_isnan|" "$source_directory/scipy/spatial/ckdtree/src/ckdtree_decl.h"
+                #sed -i '' -e '/using std::isinf;/d' -e '/using std::isnan;/d' -e 's/std::isinf/isinf/g' -e 's/std::isnan/isnan/g' $source_directory/scipy/spatial/ckdtree/src/*.cxx
                 ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -1567,7 +1685,7 @@ main() {
         # pkgconf - (autoconf, automake, libtool) or meson
         install_package "pkgconf" "configure" "autogen.sh" "--with-system-libdir=/usr/lib --with-system-includedir=/usr/include" "" "git" "https://github.com/pkgconf/pkgconf.git" "master" "YES" "YES" "pkgconf-2.3.0"
         install_builtin_pc
-        export PKG_CONFIG_PATH="$INSTALL_PREFIX/lib/pkgconfig:$INSTALL_PREFIX/share/pkgconfig"
+        export PKG_CONFIG_PATH="$INSTALL_PREFIX/lib/pkgconfig:$INSTALL_PREFIX/share/pkgconfig:$STAGE_PREFIX/lib/pkgconfig"
         export PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1
         export PKG_CONFIG_ALLOW_SYSTEM_LIBS=1
 
@@ -1711,11 +1829,13 @@ main() {
         # set_rpath "$MANIFEST_DIRECTORY/llvm.manifest"
         uninstall_manifested "llvm_bootstrap" "$MANIFEST_DIRECTORY/llvm_bootstrap.manifest" "YES"
 
+        ln -sf "$INSTALL_PREFIX/bin/clang" "$INSTALL_PREFIX/bin/cc"
+
         # libtommath - cmake, libtool
         install_package "libtommath" "cmake" "" "" "" "git" "https://github.com/libtom/libtommath.git" "develop" "YES" "YES"
 
         # pcre2 - python, zlib (builtin), pcre2
-        install_package "pcre2" "cmake" "" "" "" "git" "https://github.com/PCRE2Project/pcre2.git" "main" "YES" "YES"
+        install_package "pcre2" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/PCRE2Project/pcre2.git" "main" "YES" "YES"
 
         # swig - python, zlib (builtin), pcre2, bison
         install_package "swig" "cmake" "" "-DPCRE2_INCLUDE_DIRS=\"$INSTALL_PREFIX/include\"" "" "git" "https://github.com/swig/swig.git" "master" "YES" "YES"
@@ -1860,7 +1980,53 @@ main() {
         install_package "rust-std_bootstrap" "prebuilt" "" "" "/rust-std-x86_64-unknown-dragonfly" "https" "https://leaf.dragonflybsd.org/~mneumann/rust/2025-01-09/" "rust-std-1.84.1-x86_64-unknown-dragonfly.tar.xz" "YES" "YES"
         # install_package "rust-dports_bootstrap" "prebuilt" "" "" "usr/local/" "https" "https://mirror-master.dragonflybsd.org/dports/dragonfly:6.4:x86:64/LATEST/All/" "rust-1.79.0_1.pkg" "YES" "YES"
 
-        # rust stage 1 (versioned) - bootstrap, llvm
+        # llvm19_bootstrap - python
+        # the early rust is not compatible with newest llvm
+        local var_options=(
+            -DLLVM_ENABLE_PROJECTS=clang;lld
+            -DLLVM_TARGETS_TO_BUILD=Native
+            -DLLVM_INCLUDE_BENCHMARKS=OFF
+            -DLLVM_INCLUDE_DOCS=OFF
+            -DLLVM_INCLUDE_EXAMPLES=OFF
+            -DLLVM_INCLUDE_TESTS=OFF
+            -DLLVM_ENABLE_EH=OFF
+            -DLLVM_ENABLE_LIBCXX=OFF
+            -DLLVM_ENABLE_LIBXML2=OFF
+            -DLLVM_ENABLE_Z3_SOLVER=OFF
+            -DLLVM_PARALLEL_LINK_JOBS=2
+            -DLLVM_INSTALL_UTILS=ON
+            -DCLANG_DEFAULT_CXX_STDLIB=libstdc++
+            -DCLANG_ENABLE_STATIC_ANALYZER=OFF
+            -DCLANG_ENABLE_ARCMT=OFF
+        )
+        install_package "llvm_stage_1" "cmake" "" "var_options" "/llvm" "git" "https://github.com/llvm/llvm-project.git" "release/19.x" "YES" "YES" # "llvmorg-19.1.7"
+
+        # llvm20_bootstrap - python
+        # the early rust is not compatible with newest llvm
+        local var_options=(
+            -DLLVM_ENABLE_PROJECTS=clang;lld
+            -DLLVM_TARGETS_TO_BUILD=Native
+            -DLLVM_INCLUDE_BENCHMARKS=OFF
+            -DLLVM_INCLUDE_DOCS=OFF
+            -DLLVM_INCLUDE_EXAMPLES=OFF
+            -DLLVM_INCLUDE_TESTS=OFF
+            -DLLVM_ENABLE_EH=OFF
+            -DLLVM_ENABLE_LIBCXX=OFF
+            -DLLVM_ENABLE_LIBXML2=OFF
+            -DLLVM_ENABLE_Z3_SOLVER=OFF
+            -DLLVM_PARALLEL_LINK_JOBS=2
+            -DLLVM_INSTALL_UTILS=ON
+            -DCLANG_DEFAULT_CXX_STDLIB=libstdc++
+            -DCLANG_ENABLE_STATIC_ANALYZER=OFF
+            -DCLANG_ENABLE_ARCMT=OFF
+        )
+        install_package "llvm_stage_2" "cmake" "" "var_options" "/llvm" "git" "https://github.com/llvm/llvm-project.git" "release/20.x" "YES" "YES" # "llvmorg-20.1.1"
+
+        # should put in post-patch
+        ln -sf /usr/local/lib/libzstd.so* $STAGE_PREFIX/lib/
+        ln -sf /usr/local/lib/libzstd.so* $STAGE_PREFIX2/lib/
+
+        # rust-llvm19_stage_1 -> 1.85.1 (versioned) - bootstrap, llvm19
         local var_options=(
             "--build=x86_64-unknown-dragonfly"
             "--set" "build.cargo=$BOOTSTRAP_PREFIX/bin/cargo"
@@ -1868,10 +2034,185 @@ main() {
             "--set" "build.docs=false"
             "--set" "build.compiler-docs=false"
             "--set" "build.extended=true"
-            "--set" 'build.tools=["cargo"]'
+            "--set" "build.tools=cargo"
             "--set" "install.prefix=$STAGE_PREFIX"
             "--set" "rust.debug=false"
             "--set" "rust.rpath=true"
+            "--set" "target.x86_64-unknown-dragonfly.llvm-config=$STAGE_PREFIX/bin/llvm-config"
+            "--set" "target.x86_64-unknown-dragonfly.cc=$STAGE_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.cxx=$STAGE_PREFIX/bin/clang++"
+            "--set" "target.x86_64-unknown-dragonfly.linker=$STAGE_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.ar=$STAGE_PREFIX/bin/llvm-ar"
+            "--set" "target.x86_64-unknown-dragonfly.ranlib=$STAGE_PREFIX/bin/llvm-ranlib"
+            "--set" "llvm.download-ci-llvm=false"
+            "--set" "llvm.link-shared=false"
+            "--set" "llvm.static-libstdcpp=false"
+            "--set" "rust.lto=off"
+            "--set" "rust.debug-assertions=false"
+            "--set" "rust.jemalloc=false"
+            "--set" "rust.codegen-units=64"
+        )
+        install_package "rust-llvm19_stage_1" "configure" "" "var_options" "" "https" "https://static.rust-lang.org/dist/" "rustc-1.85.1-src.tar.xz" "YES" "YES"
+
+        # rust-llvm19_stage_2 -> 1.86.0 (versioned) - prev stage 1.85.1
+        local var_options=(
+            "--build=x86_64-unknown-dragonfly"
+            "--set" "build.cargo=$STAGE_PREFIX/bin/cargo"
+            "--set" "build.rustc=$STAGE_PREFIX/bin/rustc"
+            "--set" "build.docs=false"
+            "--set" "build.compiler-docs=false"
+            "--set" "build.extended=true"
+            "--set" "build.tools=cargo"
+            "--set" "install.prefix=$STAGE2_PREFIX"
+            "--set" "rust.debug=false"
+            "--set" "rust.rpath=true"
+            "--set" "target.x86_64-unknown-dragonfly.llvm-config=$STAGE_PREFIX/bin/llvm-config"
+            "--set" "target.x86_64-unknown-dragonfly.cc=$STAGE_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.cxx=$STAGE_PREFIX/bin/clang++"
+            "--set" "target.x86_64-unknown-dragonfly.linker=$STAGE_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.ar=$STAGE_PREFIX/bin/llvm-ar"
+            "--set" "target.x86_64-unknown-dragonfly.ranlib=$STAGE_PREFIX/bin/llvm-ranlib"
+            "--set" "llvm.download-ci-llvm=false"
+            "--set" "llvm.link-shared=false"
+            "--set" "llvm.static-libstdcpp=false"
+            "--set" "rust.lto=off"
+            "--set" "rust.debug-assertions=false"
+            "--set" "rust.jemalloc=false"
+            "--set" "rust.codegen-units=64"
+        )
+        install_package "rust-llvm19_stage_2" "configure" "" "var_options" "" "https" "https://static.rust-lang.org/dist/" "rustc-1.86.0-src.tar.xz" "YES" "YES"
+
+        # rust-llvm20_stage_1 -> 1.87.0 (versioned) - prev stage 1.86.0
+        local var_options=(
+            "--build=x86_64-unknown-dragonfly"
+            "--set" "build.cargo=$STAGE2_PREFIX/bin/cargo"
+            "--set" "build.rustc=$STAGE2_PREFIX/bin/rustc"
+            "--set" "build.docs=false"
+            "--set" "build.compiler-docs=false"
+            "--set" "build.extended=true"
+            "--set" "build.tools=cargo"
+            "--set" "install.prefix=$STAGE_PREFIX"
+            "--set" "rust.debug=false"
+            "--set" "rust.rpath=true"
+            "--set" "target.x86_64-unknown-dragonfly.llvm-config=$STAGE2_PREFIX/bin/llvm-config"
+            "--set" "target.x86_64-unknown-dragonfly.cc=$STAGE2_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.cxx=$STAGE2_PREFIX/bin/clang++"
+            "--set" "target.x86_64-unknown-dragonfly.linker=$STAGE2_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.ar=$STAGE2_PREFIX/bin/llvm-ar"
+            "--set" "target.x86_64-unknown-dragonfly.ranlib=$STAGE2_PREFIX/bin/llvm-ranlib"
+            "--set" "llvm.download-ci-llvm=false"
+            "--set" "llvm.link-shared=false"
+            "--set" "llvm.static-libstdcpp=false"
+            "--set" "rust.lto=off"
+            "--set" "rust.debug-assertions=false"
+            "--set" "rust.jemalloc=false"
+            "--set" "rust.codegen-units=64"
+        )
+        install_package "rust-llvm20_stage_1" "configure" "" "var_options" "" "https" "https://static.rust-lang.org/dist/" "rustc-1.87.0-src.tar.xz" "YES" "YES"
+
+        # rust-llvm20_stage_2 -> 1.88.0 (versioned) - prev stage 1.87.0
+        local var_options=(
+            "--build=x86_64-unknown-dragonfly"
+            "--set" "build.cargo=$STAGE_PREFIX/bin/cargo"
+            "--set" "build.rustc=$STAGE_PREFIX/bin/rustc"
+            "--set" "build.docs=false"
+            "--set" "build.compiler-docs=false"
+            "--set" "build.extended=true"
+            "--set" "build.tools=cargo"
+            "--set" "install.prefix=$STAGE2_PREFIX"
+            "--set" "rust.debug=false"
+            "--set" "rust.rpath=true"
+            "--set" "rust.lld=false"
+            "--set" "target.x86_64-unknown-dragonfly.llvm-config=$STAGE2_PREFIX/bin/llvm-config"
+            "--set" "target.x86_64-unknown-dragonfly.cc=$STAGE2_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.cxx=$STAGE2_PREFIX/bin/clang++"
+            "--set" "target.x86_64-unknown-dragonfly.linker=$STAGE2_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.ar=$STAGE2_PREFIX/bin/llvm-ar"
+            "--set" "target.x86_64-unknown-dragonfly.ranlib=$STAGE2_PREFIX/bin/llvm-ranlib"
+            "--set" "llvm.download-ci-llvm=false"
+            "--set" "llvm.link-shared=false"
+            "--set" "llvm.static-libstdcpp=false"
+            "--set" "rust.lto=off"
+            "--set" "rust.debug-assertions=false"
+            "--set" "rust.jemalloc=false"
+            "--set" "rust.codegen-units=64"
+        )
+        install_package "rust-llvm20_stage_2" "configure" "" "var_options" "" "https" "https://static.rust-lang.org/dist/" "rustc-1.88.0-src.tar.xz" "YES" "YES"
+
+        # rust-llvm20_stage_3 -> 1.89.0 (versioned) - prev stage 1.88.0
+        local var_options=(
+            "--build=x86_64-unknown-dragonfly"
+            "--set" "build.cargo=$STAGE2_PREFIX/bin/cargo"
+            "--set" "build.rustc=$STAGE2_PREFIX/bin/rustc"
+            "--set" "build.docs=false"
+            "--set" "build.compiler-docs=false"
+            "--set" "build.extended=true"
+            "--set" "build.tools=cargo"
+            "--set" "install.prefix=$STAGE3_PREFIX"
+            "--set" "rust.debug=false"
+            "--set" "rust.rpath=true"
+            "--set" "rust.lld=false"
+            "--set" "target.x86_64-unknown-dragonfly.llvm-config=$STAGE2_PREFIX/bin/llvm-config"
+            "--set" "target.x86_64-unknown-dragonfly.cc=$STAGE2_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.cxx=$STAGE2_PREFIX/bin/clang++"
+            "--set" "target.x86_64-unknown-dragonfly.linker=$STAGE2_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.ar=$STAGE2_PREFIX/bin/llvm-ar"
+            "--set" "target.x86_64-unknown-dragonfly.ranlib=$STAGE2_PREFIX/bin/llvm-ranlib"
+            "--set" "llvm.download-ci-llvm=false"
+            "--set" "llvm.link-shared=false"
+            "--set" "llvm.static-libstdcpp=false"
+            "--set" "rust.lto=off"
+            "--set" "rust.debug-assertions=false"
+            "--set" "rust.jemalloc=false"
+            "--set" "rust.codegen-units=64"
+        )
+        install_package "rust-llvm20_stage_3" "configure" "" "var_options" "" "https" "https://static.rust-lang.org/dist/" "rustc-1.89.0-src.tar.xz" "YES" "YES"
+
+        # rust-llvm_bootstrap -> 1.90.0 (versioned) - prev stage 1.89.0
+        # last to use llvm20
+        local var_options=(
+            "--build=x86_64-unknown-dragonfly"
+            "--set" "build.cargo=$STAGE3_PREFIX/bin/cargo"
+            "--set" "build.rustc=$STAGE3_PREFIX/bin/rustc"
+            "--set" "build.docs=false"
+            "--set" "build.compiler-docs=false"
+            "--set" "build.extended=true"
+            "--set" "build.tools=cargo"
+            "--set" "install.prefix=$BOOTSTRAP_PREFIX"
+            "--set" "rust.debug=false"
+            "--set" "rust.rpath=true"
+            "--set" "rust.lld=false"
+            "--set" "target.x86_64-unknown-dragonfly.llvm-config=$STAGE2_PREFIX/bin/llvm-config"
+            "--set" "target.x86_64-unknown-dragonfly.cc=$STAGE2_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.cxx=$STAGE2_PREFIX/bin/clang++"
+            "--set" "target.x86_64-unknown-dragonfly.linker=$STAGE2_PREFIX/bin/clang"
+            "--set" "target.x86_64-unknown-dragonfly.ar=$STAGE2_PREFIX/bin/llvm-ar"
+            "--set" "target.x86_64-unknown-dragonfly.ranlib=$STAGE2_PREFIX/bin/llvm-ranlib"
+            "--set" "llvm.download-ci-llvm=false"
+            "--set" "llvm.link-shared=false"
+            "--set" "llvm.static-libstdcpp=false"
+            "--set" "rust.lto=off"
+            "--set" "rust.debug-assertions=false"
+            "--set" "rust.jemalloc=false"
+            "--set" "rust.codegen-units=64"
+        )
+        install_package "rust-llvm_bootstrap" "configure" "" "var_options" "" "https" "https://static.rust-lang.org/dist/" "rustc-1.90.0-src.tar.xz" "YES" "YES"
+
+        # rust-llvm_stage_1 -> 1.91.0 (versioned) - prev stage 1.90.0
+        local var_options=(
+            "--build=x86_64-unknown-dragonfly"
+            "--set" "build.cargo=$BOOTSTRAP_PREFIX/bin/cargo"
+            "--set" "build.rustc=$BOOTSTRAP_PREFIX/bin/rustc"
+            "--set" "build.docs=false"
+            "--set" "build.compiler-docs=false"
+            "--set" "build.extended=true"
+            "--set" "build.tools=cargo"
+            "--set" "install.prefix=$STAGE_PREFIX"
+            "--set" "rust.debug=false"
+            "--set" "rust.rpath=true"
+            "--set" "rust.lld=false"
+            "--set" "rust.use-lld=true"
+            "--set" "target.x86_64-unknown-dragonfly.llvm-config=$INSTALL_PREFIX/bin/llvm-config"
             "--set" "target.x86_64-unknown-dragonfly.cc=$INSTALL_PREFIX/bin/clang"
             "--set" "target.x86_64-unknown-dragonfly.cxx=$INSTALL_PREFIX/bin/clang++"
             "--set" "target.x86_64-unknown-dragonfly.linker=$INSTALL_PREFIX/bin/clang"
@@ -1880,16 +2221,14 @@ main() {
             "--set" "llvm.download-ci-llvm=false"
             "--set" "llvm.link-shared=false"
             "--set" "llvm.static-libstdcpp=false"
-            "--set" "rust.optimize=false"
             "--set" "rust.lto=off"
-            "--set" "llvm.optimize=false"
             "--set" "rust.debug-assertions=false"
+            "--set" "rust.jemalloc=false"
+            "--set" "rust.codegen-units=64"
         )
-        install_package "rust-llvm_stage_1" "configure" "" "var_options" "" "https" "https://static.rust-lang.org/dist/" "rustc-1.85.1-src.tar.xz" "YES" "YES"
+        install_package "rust-llvm_stage_1" "configure" "" "var_options" "" "https" "https://static.rust-lang.org/dist/" "rustc-1.91.0-src.tar.xz" "YES" "YES"
 
-        exit 100
-
-        # rust stage 2 (versioned) - stage 1
+        # rust (versioned) -> 1.92.0 (versioned) - prev stage 1.91.0
         local var_options=(
             "--build=x86_64-unknown-dragonfly"
             "--set" "build.cargo=$STAGE_PREFIX/bin/cargo"
@@ -1897,56 +2236,6 @@ main() {
             "--set" "build.docs=false"
             "--set" "build.compiler-docs=false"
             "--set" "build.extended=true"
-            "--set" 'build.tools=["cargo"]'
-            "--set" "install.prefix=$STAGE_PREFIX"
-            "--set" "rust.debug=false"
-            "--set" "rust.rpath=true"
-            "--set" "target.x86_64-unknown-dragonfly.llvm-config=$INSTALL_PREFIX/bin/llvm-config"
-            "--set" "target.x86_64-unknown-dragonfly.cc=$INSTALL_PREFIX/bin/clang"
-            "--set" "target.x86_64-unknown-dragonfly.cxx=$INSTALL_PREFIX/bin/clang++"
-            "--set" "target.x86_64-unknown-dragonfly.linker=$INSTALL_PREFIX/bin/clang"
-            "--set" "target.x86_64-unknown-dragonfly.ar=$INSTALL_PREFIX/bin/llvm-ar"
-            "--set" "target.x86_64-unknown-dragonfly.ranlib=$INSTALL_PREFIX/bin/llvm-ranlib"
-            "--set" "llvm.download-ci-llvm=false"
-            "--set" "llvm.link-shared=true"
-        )
-        install_package "rust_stage_2" "configure" "" "var_options" "" "https" "https://static.rust-lang.org/dist/" "rustc-1.90.0-src.tar.xz" "YES" "YES"
-
-        # rust stage 3 (versioned) - stage 2
-        local var_options=(
-            "--build=x86_64-unknown-dragonfly"
-            "--set" "build.cargo=$STAGE_PREFIX/bin/cargo"
-            "--set" "build.rustc=$STAGE_PREFIX/bin/rustc"
-            "--set" "build.docs=false"
-            "--set" "build.compiler-docs=false"
-            "--set" "build.extended=true"
-            "--set" 'build.tools=["cargo"]'
-            "--set" "install.prefix=$STAGE_PREFIX"
-            "--set" "rust.debug=false"
-            "--set" "rust.rpath=true"
-            "--set" "target.x86_64-unknown-dragonfly.llvm-config=$INSTALL_PREFIX/bin/llvm-config"
-            "--set" "target.x86_64-unknown-dragonfly.cc=$INSTALL_PREFIX/bin/clang"
-            "--set" "target.x86_64-unknown-dragonfly.cxx=$INSTALL_PREFIX/bin/clang++"
-            "--set" "target.x86_64-unknown-dragonfly.linker=$INSTALL_PREFIX/bin/clang"
-            "--set" "target.x86_64-unknown-dragonfly.ar=$INSTALL_PREFIX/bin/llvm-ar"
-            "--set" "target.x86_64-unknown-dragonfly.ranlib=$INSTALL_PREFIX/bin/llvm-ranlib"
-            "--set" "llvm.download-ci-llvm=false"
-            "--set" "llvm.link-shared=true"
-        )
-        install_package "rust_stage_2" "configure" "" "var_options" "" "https" "https://static.rust-lang.org/dist/" "rustc-1.92.0-src.tar.xz" "YES" "YES"
-
-        # rust (versioned) - stage 2
-        local var_options=(
-            "--build=x86_64-unknown-dragonfly"
-            "--set" "build.cargo=$STAGE_PREFIX/bin/cargo"
-            "--set" "build.cargo-clippy=$STAGE_PREFIX/bin/cargo-clippy"
-            "--set" "build.rustc=$STAGE_PREFIX/bin/rustc"
-            "--set" "build.rustfmt=$STAGE_PREFIX/bin/rustfmt"
-            "--set" "build.docs=true"
-            "--set" "build.compiler-docs=true"
-            "--set" "build.extended=true"
-            "--set" 'build.tools=["cargo", "clippy", "rustdoc", "rust-analyzer", "rustfmt", "analysis", "src"]'
-            "--set" "build.print-step-timings=true"
             "--set" "build.description=DragonFlyBSD"
             "--set" "install.prefix=$INSTALL_PREFIX"
             "--set" "rust.optimize=true"
@@ -1956,7 +2245,9 @@ main() {
             "--set" "rust.rpath=true"
             "--set" "rust.jemalloc=true"
             "--set" "rust.lto=thin"
-            "--set" "rust.parallel-frontend-threads=2"
+            "--set" "rust.bootstrap-override-lld=external"
+            "--set" "rust.parallel-frontend-threads=1"
+            "--set" "rust.codegen-units=4"
             "--set" "target.x86_64-unknown-dragonfly.llvm-config=$INSTALL_PREFIX/bin/llvm-config"
             "--set" "target.x86_64-unknown-dragonfly.cc=$INSTALL_PREFIX/bin/clang"
             "--set" "target.x86_64-unknown-dragonfly.cxx=$INSTALL_PREFIX/bin/clang++"
@@ -1967,6 +2258,22 @@ main() {
             "--set" "llvm.link-shared=true"
         )
         install_package "rust" "configure" "" "var_options" "" "https" "https://static.rust-lang.org/dist/" "rustc-1.92.0-src.tar.xz" "YES" "YES"
+
+        # set_rpath "$MANIFEST_DIRECTORY/rust.manifest"
+
+        uninstall_manifested "rustc_bootstrap" "$MANIFEST_DIRECTORY/rustc_bootstrap.manifest" "YES"
+        uninstall_manifested "cargo_bootstrap" "$MANIFEST_DIRECTORY/cargo_bootstrap.manifest" "YES"
+        uninstall_manifested "rust-std_bootstrap" "$MANIFEST_DIRECTORY/rust-std_bootstrap.manifest" "YES"
+        uninstall_manifested "rust-llvm_bootstrap" "$MANIFEST_DIRECTORY/rust-llvm_bootstrap.manifest" "YES"
+
+        if [[ -d "$BOOTSTRAP_PREFIX/bin" ]]; then
+            local remove_dirs=(bin etc include lib libexec man sbin share)
+            for remove_dir in $remove_dirs; do
+                if [[ -d "$BOOTSTRAP_PREFIX/$remove_dir" ]]; then
+                    rm -rf "$BOOTSTRAP_PREFIX/$remove_dir"
+                fi
+            done
+        fi
 
         # install_package "rust-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-beta-aarch64-apple-darwin.tar.xz" "YES" "YES"
 
@@ -1982,10 +2289,10 @@ main() {
         # helix - rust
         export HELIX_DEFAULT_RUNTIME="$INSTALL_PREFIX/libexec/helix/runtime"
         install_package "helix" "cargo" "/helix-term" "" "" "git" "https://github.com/helix-editor/helix.git" "master" "YES" "YES"
-        add_rpath "$INSTALL_PREFIX/bin/hx" "\$ORIGIN/../lib"
+#        add_rpath "$INSTALL_PREFIX/bin/hx" "\$ORIGIN/../lib"
 
         # starship - rust
-        install_package "starship" "cargo" "" "" "" "git" "https://github.com/starship/starship.git" "master" "YES" "YES"
+#        install_package "starship" "cargo" "" "--no-default-features" "" "git" "https://github.com/starship/starship.git" "master" "YES" "YES"
 
         # zsh-autosuggestions
         install_package "zsh-autosuggestions" "make_only" "" "" "" "git" "https://github.com/zsh-users/zsh-autosuggestions.git" "master" "YES" "YES"
@@ -2001,16 +2308,19 @@ main() {
 
         # vhdl_ls
         install_package "vhdl_ls" "cargo" "/vhdl_ls" "" "" "git" "https://github.com/VHDL-LS/rust_hdl.git" "master" "YES" "YES"
-        add_rpath "$INSTALL_PREFIX/bin/vhdl_ls" "\$ORIGIN/../lib"
+#        add_rpath "$INSTALL_PREFIX/bin/vhdl_ls" "\$ORIGIN/../lib"
 
         # cocotb - python
-        install_package "cocotb" "pip"
+#        install_package "cocotb" "pip"
 
         # ghdl (versioned)
-        install_package "ghdl" "prebuilt" "" "" "" "https" "https://github.com/ghdl/ghdl/releases/download/nightly/" "ghdl-llvm-6.0.0-dev-macos15-aarch64.tar.gz" "YES" "YES"
+#        install_package "ghdl" "prebuilt" "" "" "" "https" "https://github.com/ghdl/ghdl/releases/download/nightly/" "ghdl-llvm-6.0.0-dev-macos15-aarch64.tar.gz" "YES" "YES"
 
         # meson - python
         install_package "meson" "pip"
+
+        # meson-python - python
+        install_package "meson-python" "pip"
 
         # setuptools - python
         install_package "setuptools" "pip"
@@ -2021,16 +2331,63 @@ main() {
         # html5lib - python
         install_package "html5lib" "pip" "binary"
 
+        # cython - python
+        install_package "cython" "pip"
+
+        # pythran - python
+        install_package "pythran" "pip"
+
+        # pybind11 - python
+        install_package "pybind11" "pip"
+
         # libpng - cmake, libtool, zlib (mac)
         install_package "libpng" "cmake" "" "" "" "git" "https://github.com/pnggroup/libpng.git" "master" "YES" "YES"
+
+        # libffi -
+        install_package "libffi" "configure" "" "" "" "git" "https://github.com/libffi/libffi.git" "master" "YES" "YES"
+
+        export TEMP_LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
+        export LD_LIBRARY_PATH="$STAGE_PREFIX/lib:$LD_LIBRARY_PATH"
+
+        # glib_stage_1 - meson
+        local var_options=(
+            "-Dselinux=disabled"
+            "-Ddtrace=disabled"
+            "-Dxattr=false"
+            "-Dlibmount=disabled"
+            "-Dtests=false"
+            "-Db_lundef=false"
+            "-Dintrospection=disabled"
+        )
+        install_package "glib_stage_1" "meson" "" "var_options" "" "git" "https://github.com/GNOME/glib.git" "main" "YES" "YES"
 
         # gobject-introspection (versioned)
         install_package "gobject-introspection" "meson" "" "" "" "git" "https://github.com/GNOME/gobject-introspection.git" "main" "YES" "YES" "1.86.0"
 
-        # freetype - cmake, pkgconf, libpng, bzip2 (mac), zlib (mac)
-        install_package "freetype" "cmake" "" "" "" "git" "https://github.com/freetype/freetype.git" "master" "YES" "YES"
+        # glib - meson
+        local var_options=(
+            "-Dselinux=disabled"
+            "-Ddtrace=disabled"
+            "-Dxattr=false"
+            "-Dlibmount=disabled"
+            "-Dtests=false"
+            "-Db_lundef=false"
+            "-Dintrospection=enabled"
+        )
+        install_package "glib" "meson" "" "var_options" "" "git" "https://github.com/GNOME/glib.git" "main" "YES" "YES"
 
-        # fontconfig - autoconf, gettext, libtool, pkgconf, freetype, gperf (mac), python (mac), bzip2 (mac), expat (mac)
+        export LD_LIBRARY_PATH="$TEMP_LD_LIBRARY_PATH"
+
+        # gperf -
+        install_package "gperf" "configure" "" "" "" "https" "https://ftp.gnu.org/pub/gnu/gperf/" "gperf-3.3.tar.gz" "YES" "YES"
+
+        # freetype - cmake, pkgconf, libpng, bzip2 (mac), zlib (mac)
+        install_package "freetype" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/freetype/freetype.git" "master" "YES" "YES"
+
+        # expat
+        install_package "expat" "cmake" "" "" "expat" "git" "https://github.com/libexpat/libexpat.git" "master" "YES" "YES"
+
+        # fontconfig - autoconf, gettext, libtool, pkgconf, freetype, gperf, python, bzip2 (mac), expat (mac)
         install_package "fontconfig" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/fontconfig/fontconfig.git" "main" "YES" "YES"
 
         # pixman (versioned) - meson
@@ -2049,7 +2406,13 @@ main() {
         install_package "openjpeg" "cmake" "" "" "" "git" "https://github.com/uclouvain/openjpeg.git" "master" "YES" "YES"
 
         # openexr - cmake
-        install_package "openexr" "cmake" "" "" "" "git" "https://github.com/AcademySoftwareFoundation/openexr.git" "main" "YES" "YES"
+        local var_options=(
+            "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined"
+            "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--allow-shlib-undefined"
+            "-DCMAKE_MODULE_LINKER_FLAGS=-Wl,--allow-shlib-undefined"
+            "-DBUILD_TESTING=OFF"
+        )
+        install_package "openexr" "cmake" "" "var_options" "" "git" "https://github.com/AcademySoftwareFoundation/openexr.git" "main" "YES" "YES"
 
         # libwebp - cmake
         install_package "libwebp" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/webmproject/libwebp.git" "main" "YES" "YES"
@@ -2061,6 +2424,9 @@ main() {
         # libyuv - cmake
         install_package "libyuv" "cmake" "" "" "" "git" "https://chromium.googlesource.com/libyuv/libyuv" "main" "YES" "YES"
 
+        # yasm - cmake
+        install_package "yasm" "configure" "" "" "" "git" "https://github.com/yasm/yasm.git" "master" "YES" "YES"
+
         # aom - cmake, aom
         install_package "aom" "cmake" "" "-DBUILD_SHARED_LIBS=TRUE -DENABLE_TESTDATA=off -DENABLE_TESTS=off" "" "git" "https://aomedia.googlesource.com/aom" "main" "YES" "YES"
 
@@ -2068,14 +2434,17 @@ main() {
         install_package "libavif" "cmake" "" "-DAVIF_CODEC_AOM=SYSTEM -DAVIF_BUILD_APPS=ON" "" "git" "https://github.com/AOMediaCodec/libavif.git" "main" "YES" "YES"
 
         # libjxl - cmake
-        install_package "libjxl" "cmake" "" "-DBUILD_TESTING=OFF" "" "git" "https://github.com/libjxl/libjxl.git" "main" "YES" "YES"
+        local var_options=(
+            "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined"
+            "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--allow-shlib-undefined"
+            "-DCMAKE_MODULE_LINKER_FLAGS=-Wl,--allow-shlib-undefined"
+            "-DBUILD_TESTING=OFF"
+        )
+        install_package "libjxl" "cmake" "" "var_options" "" "git" "https://github.com/libjxl/libjxl.git" "main" "YES" "YES"
 
         # cargo-c
         install_package "cargo-c" "cargo" "" "" "" "git" "https://github.com/lu-zero/cargo-c.git" "master" "YES" "YES"
-        add_rpath "$INSTALL_PREFIX/bin/cargo-cbuild" "\$ORIGIN/../lib"
-
-        # glib - meson
-        install_package "glib" "meson" "" "-Dselinux=disabled -Ddtrace=disabled -Dsystemtap=disabled -Dbsymbolic_functions=false -Dintrospection=enabled -Dtests=false" "" "git" "https://github.com/GNOME/glib.git" "main" "YES" "YES"
+#        add_rpath "$INSTALL_PREFIX/bin/cargo-cbuild" "\$ORIGIN/../lib"
 
         # markdown - python
         install_package "markdown" "pip"
@@ -2096,17 +2465,29 @@ main() {
         install_package "pygments" "pip"
 
         # gdk-pixbuf
-        install_package "gdk-pixbuf" "meson" "" "" "" "git" "https://gitlab.gnome.org/GNOME/gdk-pixbuf.git" "master" "YES" "YES"
-        add_rpath "$INSTALL_PREFIX/lib/libgdk_pixbuf-2.0.0.so" "\$ORIGIN/../lib"
+        install_package "gdk-pixbuf" "meson" "" "-Dtests=false" "" "git" "https://gitlab.gnome.org/GNOME/gdk-pixbuf.git" "master" "YES" "YES"
+#        add_rpath "$INSTALL_PREFIX/lib/libgdk_pixbuf-2.0.0.so" "\$ORIGIN/../lib"
 
         # graphite2 - cmake
         install_package "graphite2" "cmake" "" "" "" "git" "https://github.com/silnrsi/graphite.git" "master" "YES" "YES"
 
         # harfbuzz - meson
-        install_package "harfbuzz" "meson" "" "-Dtests=disabled -Dcoretext=enabled -Dgraphite2=enabled -Ddocs=disabled" "" "git" "https://github.com/harfbuzz/harfbuzz.git" "main" "YES" "YES"
+        local var_options=(
+            "-Dtests=disabled"
+            "-Dgraphite2=enabled"
+            "-Ddocs=disabled"
+        )
+        install_package "harfbuzz" "meson" "" "var_options" "" "git" "https://github.com/harfbuzz/harfbuzz.git" "main" "YES" "YES"
 
         # pango - meson
-        install_package "pango" "meson" "" "-Dintrospection=enabled -Dfontconfig=enabled -Dcairo=enabled -Dfreetype=enabled -Dbuild-testsuite=false" "" "git" "https://gitlab.gnome.org/GNOME/pango.git" "main" "YES" "YES"
+        local var_options=(
+            "-Dintrospection=enabled"
+            "-Dfontconfig=enabled"
+            "-Dcairo=enabled"
+            "-Dfreetype=enabled"
+            "-Dbuild-testsuite=false"
+        )
+        install_package "pango" "meson" "" "var_options" "" "git" "https://gitlab.gnome.org/GNOME/pango.git" "main" "YES" "YES"
 
         # dbus (git check pid fix)
         install_package "dbus" "cmake" "" "" "" "https" "https://dbus.freedesktop.org/releases/dbus/" "dbus-1.16.2.tar.xz" "YES" "YES"
@@ -2128,20 +2509,16 @@ main() {
         # mpc
         install_package "mpc" "configure" "" "" "" "git" "https://gitlab.inria.fr/mpc/mpc.git" "master" "YES" "YES"
 
-        exit 100
-        # gnufortran (versioned) - ()
-        # alternative is flang from llvm, but it is large download. this is gcc, but we dont want c or c++
-        # install_package "gnufortran" "configure" "" "--enable-languages=fortran --disable-multilib --enable-lto --without-headers --program-prefix=gnu" "" "https" "https://ftp.gnu.org/gnu/gcc/gcc-15.1.0/" "gcc-15.1.0.tar.xz" "YES" "YES"
-        # gfortran (versioned) https://mac.r-project.org/tools/gfortran-14.2-universal.pkg
-        # install_package "gfortran" "prebuilt" "" "" "/local" "https" "https://mac.r-project.org/tools/" "gfortran-14.2-darwin20-r2-universal.tar.xz" "YES" "YES"
-        # http://prdownloads.sourceforge.net/hpc/gfortran-14.1-m1-bin.tar.gz?download
-        # https://github.com/R-macos/gcc-14-branch/releases/download/gcc-14.2-darwin-r2.1/gfortran-14.2-darwin20-r2-universal.tar.xz
+        # openblas - cmake
+        install_package "openblas" "cmake" "" "" "" "git" "https://github.com/OpenMathLib/OpenBLAS.git" "develop" "YES" "YES"
 
         # numpy - python
         install_package "numpy" "pip"
 
-        # scipy - python, when i get to decide about fotran, this must be binary
-        install_package "scipy" "pip" "binary"
+        # scipy (versioned) - python
+        install_package "scipy" "pip" "local" "" "" "https" "https://files.pythonhosted.org/packages/source/s/scipy/" "scipy-1.17.0.tar.gz" "YES" "YES"
+        # install_package "scipy" "pip" "config" "setup-args=-Dcpp_args=['-Disinf=std::isinf','-Disnan=std::isnan']"
+        # install_package "scipy" "pip" "local" "" "" "pip"
 
         # pytest - python
         install_package "pytest" "pip"
@@ -2153,7 +2530,11 @@ main() {
         install_package "nettle" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/nettle/" "nettle-3.10.2.tar.gz" "YES" "YES"
 
         # unbound
-        install_package "unbound" "configure" "" "--with-libexpat --with-libevent" "" "git" "https://github.com/NLnetLabs/unbound.git" "master" "YES" "YES"
+        local var_options=(
+            "--with-libexpat"
+            "--with-libevent"
+        )
+        install_package "unbound" "configure" "" "var_options" "" "git" "https://github.com/NLnetLabs/unbound.git" "master" "YES" "YES"
 
         # p11-kit
         install_package "p11-kit" "meson" "" "" "" "git" "https://github.com/p11-glue/p11-kit.git" "master" "YES" "YES"
@@ -2162,19 +2543,33 @@ main() {
         install_package "c-ares" "cmake" "" "" "" "git" "https://github.com/c-ares/c-ares.git" "main" "YES" "YES"
 
         # gnutls (versioned)
-        install_package "gnutls" "configure" "" "--with-included-libtasn1 --with-included-unistring" "" "https" "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/" "gnutls-3.8.11.tar.xz" "YES" "YES"
+        local var_options=(
+            "--with-included-libtasn1"
+            "--with-included-unistring"
+        )
+        install_package "gnutls" "configure" "" "var_options" "" "https" "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/" "gnutls-3.8.11.tar.xz" "YES" "YES"
 
         # libass
         install_package "libass" "meson" "" "" "" "git" "https://github.com/libass/libass.git" "master" "YES" "YES"
 
         # libbluray (versioned)
-        install_package "libbluray" "meson" "" "-Dbdj_jar=disabled -Dfontconfig=enabled -Dfreetype=enabled -Dlibxml2=enabled" "" "https" "https://download.videolan.org/videolan/libbluray/1.4.0/" "libbluray-1.4.0.tar.xz" "YES" "YES"
+        local var_options=(
+            "-Dbdj_jar=disabled"
+            "-Dfontconfig=enabled"
+            "-Dfreetype=enabled"
+            "-Dlibxml2=enabled"
+        )
+        install_package "libbluray" "meson" "" "var_options" "" "https" "https://download.videolan.org/videolan/libbluray/1.4.0/" "libbluray-1.4.0.tar.xz" "YES" "YES"
 
         # mpg123 (versioned)
         install_package "mpg123" "configure" "" "" "" "https" "https://sourceforge.net/projects/mpg123/files/mpg123/1.33.3/" "mpg123-1.33.3.tar.bz2" "YES" "YES"
 
         # lame (versioned)
-        install_package "lame" "configure" "" "--disable-debug --enable-nasm" "" "https" "https://sourceforge.net/projects/lame/files/lame/3.100/" "lame-3.100.tar.gz" "YES" "YES"
+        local var_options=(
+            "--disable-debug"
+            "--enable-nasm"
+        )
+        install_package "lame" "configure" "" "var_options" "" "https" "https://sourceforge.net/projects/lame/files/lame/3.100/" "lame-3.100.tar.gz" "YES" "YES"
 
         # libsndfile
         install_package "libsndfile" "cmake" "" "" "" "git" "https://github.com/libsndfile/libsndfile.git" "master" "YES" "YES"
@@ -2313,9 +2708,6 @@ main() {
 
         # gtk-doc
         install_package "gtk-doc" "meson" "" "-Dtests=false -Dyelp_manual=false" "" "git" "https://gitlab.gnome.org/GNOME/gtk-doc.git" "master" "YES" "YES"
-
-        # gtk-mac-integration
-        install_package "gtk-mac-integration" "configure_in_source" "./autogen.sh" "--without-gtk2 --with-gtk3 --enable-introspection=yes" "" "git" "https://gitlab.gnome.org/GNOME/gtk-mac-integration.git" "master" "YES" "YES"
 
         # desktop-file-utils
         install_package "desktop-file-utils" "meson" "" "" "" "git" "https://gitlab.freedesktop.org/xdg/desktop-file-utils.git" "master" "YES" "YES"
