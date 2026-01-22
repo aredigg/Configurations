@@ -372,6 +372,64 @@ script_trap() {
 # Patches
 # ==============================================================================
 
+patch_ffmpeg() {
+    local package=$1
+    local diff_filename="local_install.patch"
+        if [[ ! -f "${diff_filename}" ]]; then
+            tee "${diff_filename}" > /dev/null << EOF
+diff --git a/libavfilter/af_asr.c b/libavfilter/af_asr.c
+index 8e8eeb19a7..bba793cfb5 100644
+--- a/libavfilter/af_asr.c
++++ b/libavfilter/af_asr.c
+@@ -41,7 +41,7 @@ typedef struct ASRContext {
+     char *logfn;
+
+     ps_decoder_t *ps;
+-    cmd_ln_t *config;
++    ps_config_t *config;
+
+     int utt_started;
+ } ASRContext;
+@@ -100,16 +100,16 @@ static av_cold int asr_init(AVFilterContext *ctx)
+     ASRContext *s = ctx->priv;
+     const float frate = s->rate;
+     char *rate = av_asprintf("%f", frate);
+-    const char *argv[] = { "-logfn",    s->logfn,
+-                           "-hmm",      s->hmm,
+-                           "-lm",       s->lm,
+-                           "-lmctl",    s->lmctl,
+-                           "-lmname",   s->lmname,
+-                           "-dict",     s->dict,
+-                           "-samprate", rate,
+-                           NULL };
+-
+-    s->config = cmd_ln_parse_r(NULL, ps_args(), 14, (char **)argv, 0);
++
++    s->config = ps_config_init(NULL);
++    ps_config_set_str(s->config, "logfn", s->logfn);
++    ps_config_set_str(s->config, "hmm", s->hmm);
++    ps_config_set_str(s->config, "lm", s->lm);
++    ps_config_set_str(s->config, "lmctl", s->lmctl);
++    ps_config_set_str(s->config, "lmname", s->lmname);
++    ps_config_set_str(s->config, "dict", s->dict);
++    ps_config_set_str(s->config, "samprate", rate);
++
+     av_free(rate);
+     if (!s->config)
+         return AVERROR(ENOMEM);
+@@ -160,7 +160,7 @@ static av_cold void asr_uninit(AVFilterContext *ctx)
+
+     ps_free(s->ps);
+     s->ps = NULL;
+-    cmd_ln_free_r(s->config);
++    ps_config_free(s->config);
+     s->config = NULL;
+ }
+
+EOF
+         fi
+         git apply "${diff_filename}"
+}
 
 # PKG for builtins
 # ==============================================================================
@@ -397,6 +455,26 @@ Name: zlib
 Description: zlib compression library
 Version: ${zlib_version:-1.2.11}
 Libs: -L\${libdir} -lz
+Cflags: -I\${includedir}
+EOF
+    fi
+
+    # zstd
+    if [[ -f /usr/local/lib/libzstd.so ]] && [[ -f /usr/local/include/zstd.h ]]; then
+        local zstd_major=$(grep '#define ZSTD_VERSION_MAJOR' /usr/local/include/expat.h | awk '{print $3}')
+        local zstd_minor=$(grep '#define ZSTD_VERSION_MINOR' /usr/local/include/expat.h | awk '{print $3}')
+        local zstd_release=$(grep '#define ZSTD_VERSION_RELEASE' /usr/local/include/expat.h | awk '{print $3}')
+        local zstd_version="${zstd_major:-2}.${zstd_minor:-5}.${zstd_release:-0}"
+        cat > "$pc_dir/libzstd.pc" << EOF
+prefix=/usr/local
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: libzstd
+Description: zstd system library
+Version: ${zstd_version:-1.5.0}
+Libs: -L\${libdir} -lzstd
 Cflags: -I\${includedir}
 EOF
     fi
@@ -739,7 +817,11 @@ install_configure() {
     local tool_options="$3"
     local source_directory="$4"
     local build_directory="$5"
-    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib:$INSTALL_PREFIX/lib:/usr/lib/gcc80'"
+    if [[ $base_package == "qemu" ]]; then
+        local -x LDFLAGS="$LDFLAGS -Wl,-rpath,\$ORIGIN/../lib:$INSTALL_PREFIX/lib:/usr/lib/gcc80"
+    else
+        local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib:$INSTALL_PREFIX/lib:/usr/lib/gcc80'"
+    fi
     local base_package="${package%(_bootstrap|_stage_1|_stage_2|_stage_3)}"
     local make_cmd="make"
     if command -v gnumake >/dev/null 2>&1; then
@@ -922,6 +1004,7 @@ install_cmake() {
             "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON"
             "-DCMAKE_INSTALL_RPATH_USE_LINK_RPATH=OFF"
             "-DCMAKE_BUILD_TYPE=Release"
+            "-DBUILD_SHARED_LIBS=TRUE"
         )
         if [[ $tool_options =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && (( ${+parameters[$tool_options]} )); then
                 cmake_options+=( "${(@P)tool_options}" )
@@ -1227,40 +1310,50 @@ install_custom_x265() {
     local build_directory="$3"
 
     if [[ $INSTALL_COMMAND == "install" ]]; then
-        print_status $package "INFO" "Configuring (12)"
+        print_status $package "INFO" "Configuring (12bit)"
         local cmake_options=(
             "-Wno-dev"
             "-DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX"
-            '-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib:$INSTALL_PREFIX/lib'
+            '-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib:$INSTALL_PREFIX/lib:/usr/lib/gcc80'
             "-DCMAKE_BUILD_TYPE=Release"
+            "-DCMAKE_EXE_LINKER_FLAGS=$LDFLAGS -Wl,--allow-shlib-undefined"
+            "-DCMAKE_SHARED_LINKER_FLAGS=$LDFLAGS -Wl,--allow-shlib-undefined"
+            "-DCMAKE_MODULE_LINKER_FLAGS=$LDFLAGS -Wl,--allow-shlib-undefined"
         )
         mkdir -p "$build_directory/main12"
         cd "$build_directory/main12"
         $INSTALL_PREFIX/bin/cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DMAIN12=ON "$source_directory"
-        print_status $package "INFO" "Building (12)"
+        print_status $package "INFO" "Building (12bit)"
         $INSTALL_PREFIX/bin/cmake --build . --parallel=$CONCURRENT_JOBS
 
-        print_status $package "INFO" "Configuring (10)"
+        print_status $package "INFO" "Configuring (10bit)"
         mkdir -p "$build_directory/main10"
         cd "$build_directory/main10"
         $INSTALL_PREFIX/bin/cmake $cmake_options -DHIGH_BIT_DEPTH=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DEXPORT_C_API=OFF -DENABLE_HDR10_PLUS=ON "$source_directory"
-        print_status $package "INFO" "Building (10)"
+        print_status $package "INFO" "Building (10bit)"
         $INSTALL_PREFIX/bin/cmake --build . --parallel=$CONCURRENT_JOBS
 
         print_status $package "INFO" "Configuring (Main)"
         mkdir -p "$build_directory/main"
         cd "$build_directory/main"
-        $INSTALL_PREFIX/bin/cmake $cmake_options -DLINKED_12BIT=ON -DLINKED_10BIT=ON -DEXTRA_LINK_FLAGS=-L. "-DEXTRA_LIB=x265_main10.a;x265_main12.a" "$source_directory"
+        $INSTALL_PREFIX/bin/cmake $cmake_options -DLINKED_12BIT=ON -DLINKED_10BIT=ON -DEXTRA_LINK_FLAGS="-L. -L$build_directory/main12 -L$build_directory/main10" "-DEXTRA_LIB=x265.a;x265.a" "$source_directory"
         print_status $package "INFO" "Building (Main)"
         $INSTALL_PREFIX/bin/cmake --build . --parallel=$CONCURRENT_JOBS
 
+        print_status $package "INFO" "Merging"
         mv "$build_directory/main12/libx265.a" "$build_directory/main/libx265_main12.a"
         mv "$build_directory/main10/libx265.a" "$build_directory/main/libx265_main10.a"
         mv "$build_directory/main/libx265.a" "$build_directory/main/libx265_main.a"
-        libtool -static -o "$build_directory/main/libx265.a" \
-            "$build_directory/main/libx265_main.a" \
-            "$build_directory/main/libx265_main10.a" \
-            "$build_directory/main/libx265_main12.a"
+
+        $INSTALL_PREFIX/bin/llvm-ar -M <<EOF
+create libx265.a
+addlib libx265_main.a
+addlib libx265_main10.a
+addlib libx265_main12.a
+save
+end
+EOF
+        $INSTALL_PREFIX/bin/llvm-ranlib libx265.a
 
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
@@ -1322,7 +1415,7 @@ install_package() {
             find "$BOOTSTRAP_PREFIX" -type f | sort > "$MANIFEST_DIRECTORY/${package}.pre-manifest"
         fi
         download "$base_package" "$download_command" "$download_url" "$download_arg" "$use_etag" "$use_strip" "$download_tag"
-        pre_patch "$base_package" "$source_directory"
+        pre_patch "$base_package" "$source_directory" "$build_directory"
         if [[ -d "$build_directory" ]]; then rm -rf $build_directory; fi
         case "$2" in
             configure)
@@ -1488,8 +1581,8 @@ pre_patch() {
                 patch -ruN -d ${2} < d9ebb20010b3f90a7a5c7bf4a5edff2eb58f2a4f.patch
                 ;;
             libepoxy)
-                print_status $package "INFO" "Patching"
-                sed -i '' '/requires_private/d' "${2}/src/meson.build"
+                #print_status $package "INFO" "Patching"
+                #sed -i '' '/requires_private/d' "${2}/src/meson.build"
                 ;;
             dia)
                 print_status $package "INFO" "Patching"
@@ -1605,7 +1698,104 @@ pre_patch() {
                 sed -i '' '1s/^/#include <dlfcn.h>\n/' "$source_directory/src/compat/compat_dl.c"
                 ;;
             libmodplug)
+                print_status $package "INFO" "Patching"
                 find "$source_directory/src" -name "*.cpp" -exec sed -i '' 's/register //g' {} +
+                ;;
+            rubberband)
+                print_status $package "INFO" "Patching"
+                sed -i '' '1s/^/#include <stddef.h>\n/' "$source_directory/src/common/mathmisc.h"
+                ;;
+            shine)
+                print_status $package "INFO" "Patching"
+                sed -i '' 's/^#if !defined(__APPLE__).*/#if !defined(__APPLE__) \&\& !defined(__FreeBSD__) \&\& !defined(__DragonFly__)/' "$source_directory/src/lib/bitstream.c"
+                ;;
+            vdev2)
+                print_status $package "INFO" "Patching"
+                sed -i '' 's/elseif(CMAKE_SYSTEM_NAME MATCHES "FreeBSD")/elseif(CMAKE_SYSTEM_NAME MATCHES "FreeBSD" OR CMAKE_SYSTEM_NAME MATCHES "DragonFly")/g' "$source_directory/CMakeLists.txt"
+                sed -i '' "s|cm_define_var(VDE_FREEBSD 1)|&\n    if(CMAKE_SYSTEM_NAME MATCHES \"DragonFly\")\n        cm_define_var(VDE_DRAGONFLY 1)\n    endif()|" "$source_directory/CMakeLists.txt"
+                sed -i '' 's|"net/if_tun.h"|"net/tun/if_tun.h"|' "$source_directory/CMakeLists.txt"
+                sed -i '' 's/defined(VDE_FREEBSD)/defined(VDE_FREEBSD) || defined(VDE_DRAGONFLY)/g' "$source_directory/src/vde_plug2tap.c"
+                sed -i '' 's/#ifdef VDE_FREEBSD/#if defined(VDE_FREEBSD) || defined(VDE_DRAGONFLY)/' "$source_directory/src/vde_plug2tap.c"
+                sed -i '' "s|#include <net/if_tun.h>|#ifdef VDE_DRAGONFLY\n#include <net/tun/if_tun.h>\n#else\n#include <net/if_tun.h>\n#endif|" "$source_directory/src/vde_plug2tap.c"
+                sed -i '' 's/setpgrp()/setpgrp(0, 0)/' "$source_directory/src/dpipe.c"
+                sed -i '' '1s/^/#include <net\/bpf.h>\n/' "$source_directory/src/vde_pcapplug.c"
+                sed -i '' '1s/^/#include <sys\/types.h>\n#include <sys\/socket.h>\n#include <netinet\/in.h>\n#include <arpa\/inet.h>\n/' "$source_directory/src/vde_vxlan/vxlan.c"
+                sed -i '' 's/ ALL make / ALL gnumake /' "$source_directory/man/CMakeLists.txt"
+                ;;
+            libtiff)
+                print_status $package "INFO" "Patching"
+                awk '/case TIFF_SETGET_C0_IFD8:/ { if (++n > 1) next } 1' "$source_directory/libtiff/tif_dirread.c" > "$source_directory/libtiff/tif_dirread.c.tmp" && mv "$source_directory/libtiff/tif_dirread.c.tmp" "$source_directory/libtiff/tif_dirread.c"
+                ;;
+            xavs2)
+                print_status $package "INFO" "Patching"
+                sed -i '' '1s|.*|#!/usr/bin/env -S zsh --emulate sh|' "$source_directory/configure"
+                sed -i '' 's/freebsd\*)/freebsd*|dragonfly*)/' "$source_directory/configure"
+                sed -i '' 's/, encoder_aec_encode_one_frame, h/, (void *(*)(void *))encoder_aec_encode_one_frame, h/g' "$source_directory/../../source/encoder/encoder.c"
+                pushd "$source_directory"
+                mkdir -p common/vec common/x86 common/aarch64 common/arm common/ppc encoder test
+                popd
+                ;;
+            xvidcore)
+                print_status $package "INFO" "Patching"
+                sed -i '' 's/\*bsd\*|/\*bsd\*|dragonfly\*|/g' "$source_directory/configure"
+                sed -i '' 's/lea r9, \[%2\]/lea r9, [rel %2]/g' "$source_directory/../../src/nasm.inc"
+                find "$source_directory/../../src" -name '*.asm' -exec sed -i '' 's/lea \(TMP1\|_EBX\), \[\(Rounder[A-Za-z0-9_]*\)\]/lea \1, [rel \2]/g' {} +
+                find "$source_directory/../../src" -name '*.asm' -print0 | xargs -0 sed -i '' -e 's/\blea[[:space:]]\+\(TMP[01]\),[[:space:]]*\[\(Rounder[^]]*\)\]/lea \1, [rel \2]/g'
+                sed -i '' -E '/^cglobal xvid_(FIR_|Expand_mmx)/d' "$source_directory/../../src/image/x86_asm/qpel_mmx.asm"
+#                find "$source_directory/../../" -name '*.asm' -print0 | xargs -0 sed -i '' -e 's/^[[:space:]]*lea[[:space:]]\{1,\}r9,[[:space:]]*\[%2\]/  lea r9, [rel %2]/'
+#                sed -i '' 's/MARK_FUNCS="-DMARK_FUNCS"/MARK_FUNCS="-DDEFAULT REL -DMARK_FUNCS"/g' "$source_directory/configure"
+                ;;
+            openal)
+                print_status $package "INFO" "Patching"
+                sed -i '' 's/^#elif defined(__APPLE__)/#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__DragonFly__)/' "$source_directory/common/althreads.h"
+                sed -i '' 's/std::for_each_n(\([^,]*\), \([^,]*\),/std::for_each(\1, \1 + \2,/' "$source_directory/alc/alu.cpp"
+                ;;
+            x264)
+                print_status $package "INFO" "Patching"
+                sed -i '' '1s|.*|#!/usr/bin/env -S zsh --emulate sh|' "$source_directory/configure"
+                pushd "$source_directory"
+                mkdir -p common/vec common/x86 common/aarch64 common/arm common/ppc encoder test
+                popd
+                ;;
+            libvpl)
+                print_status $package "INFO" "Patching"
+                sed -i '' 's/if defined(__linux__)/if defined(__linux__) || defined(__FreeBSD__) || defined(__DragonFly__)/' \
+                    "$source_directory/libvpl/src/mfx_dispatcher_vpl.h" \
+                    "$source_directory/libvpl/src/mfx_dispatcher_vpl_lowlatency.cpp" \
+                    "$source_directory/libvpl/test/unit/src/dispatcher_enum_impls.cpp" \
+                    "$source_directory/libvpl/src/mfx_dispatcher_vpl_msdk.cpp" \
+                    "$source_directory/libvpl/test/runtimes/stub/src/config.h" \
+                    "$source_directory/libvpl/src/mfx_dispatcher_vpl_msdk.cpp" \
+                    "$source_directory/examples/api2x/hello-encode-jpeg/src/util.hpp" \
+                    "$source_directory/examples/api2x/hello-encode-jpeg/src/hello-encode-jpeg.cpp" \
+                    "$source_directory/api/vpl/mfxdefs.h"
+                #sed -i '' 's/if defined(__linux__)/if defined(__linux__) || defined(__FreeBSD__) || defined(__DragonFly__)/' \
+                sed -i '' 's/#ifdef __linux__/#if defined(__linux__) || defined(__FreeBSD__) || defined(__DragonFly__)/' \
+                    "$source_directory/libvpl/src/mfx_dispatcher_vpl_msdk.cpp" \
+                    "$source_directory/libvpl/src/mfx_dispatcher_vpl_loader.cpp" \
+                    "$source_directory/libvpl/src/mfx_dispatcher_vpl_lowlatency.cpp" \
+                    "$source_directory/examples/api1x_core/legacy-decode/src/util.hpp" \
+                    "$source_directory/examples/api1x_core/legacy-vpp/src/util.hpp" \
+                    "$source_directory/examples/interop/vpl-infer/src/vpl-infer.cpp" \
+                    "$source_directory/examples/interop/vpl-infer/src/util.hpp" \
+                    "$source_directory/examples/api2x/hello-sharing-vaapi/include/device-vaapi.h" \
+                    "$source_directory/examples/api2x/hello-decode/src/util.hpp" \
+                    "$source_directory/examples/api2x/hello-transcode/src/util.hpp" \
+                    "$source_directory/examples/api2x/hello-encode/src/util.hpp" \
+                    "$source_directory/examples/api2x/hello-vpp/src/util.hpp" \
+                    "$source_directory/examples/api2x/hello-decvpp/src/util.hpp" \
+                    "$source_directory/examples/api2x/hello-encode-jpeg/src/util.hpp"
+                ;;
+            opencl)
+                sed -i '' 's/#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__QNXNTO__)/& || defined(__DragonFly__)/' "$source_directory/external/OpenCL-ICD-Loader/loader/icd_platform.h"
+                ;;
+            ffmpeg)
+                pushd "$source_directory"
+                patch_ffmpeg "$package"
+                popd
+                ;;
+            qemu)
+                sed -i '' "s/host_os == 'freebsd'/(host_os == 'freebsd' or host_os == 'dragonfly')/g" "$source_directory/meson.build"
                 ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -2455,7 +2645,8 @@ main() {
 
         # libtiff - cmake
         #export LDFLAGS="-lsharpyuv"
-        install_package "libtiff" "configure_in_source" "./autogen.sh" "" "" "git" "https://gitlab.com/libtiff/libtiff.git" "master" "YES" "YES"
+        #install_package "libtiff" "configure_in_source" "./autogen.sh" "" "" "git" "https://gitlab.com/libtiff/libtiff.git" "master" "YES" "YES"
+        install_package "libtiff" "cmake" "" "" "" "git" "https://gitlab.com/libtiff/libtiff.git" "master" "YES" "YES"
 
         # libyuv - cmake
         install_package "libyuv" "cmake" "" "" "" "git" "https://chromium.googlesource.com/libyuv/libyuv" "main" "YES" "YES"
@@ -2625,7 +2816,10 @@ main() {
         install_package "fdk-aac" "cmake" "" "" "" "git" "https://github.com/mstorsjo/fdk-aac.git" "master" "YES" "YES"
 
         # flite
-        install_package "flite" "configure_in_source" "" "" "" "git" "https://github.com/festvox/flite.git" "master" "YES" "YES"
+        local var_options=(
+            "--enable-shared"
+        )
+        install_package "flite" "configure_in_source" "" "var_options" "" "git" "https://github.com/festvox/flite.git" "master" "YES" "YES"
 
         # game-music-emu
         install_package "game-music-emu" "cmake" "" "" "" "git" "https://github.com/libgme/game-music-emu.git" "master" "YES" "YES"
@@ -2646,7 +2840,11 @@ main() {
         install_package "vo-amrwbenc" "configure" "" "" "" "https" "https://sourceforge.net/projects/opencore-amr/files/vo-amrwbenc/" "vo-amrwbenc-0.1.3.tar.gz" "YES" "YES"
 
         # openh264
-        install_package "openh264" "make_only" "" "" "" "git" "https://github.com/cisco/openh264.git" "master" "YES" "YES"
+        local var_options=(
+            "OS=bsd"
+            "ARCH=x86_64"
+        )
+        install_package "openh264" "make_only" "" "var_options" "" "git" "https://github.com/cisco/openh264.git" "master" "YES" "YES"
 
         # libogg
         install_package "libogg" "cmake" "" "" "" "git" "https://gitlab.xiph.org/xiph/ogg.git" "master" "YES" "YES"
@@ -2668,7 +2866,7 @@ main() {
 
         # openmpt
         #export LDFLAGS="-lmp3lame"
-        install_package "openmpt" "make_only" "" "" "" "git" "https://github.com/OpenMPT/openmpt.git" "master" "YES" "YES"
+        install_package "openmpt" "make_only" "" "STDCXX=c++17" "" "git" "https://github.com/OpenMPT/openmpt.git" "master" "YES" "YES"
         #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # libqrencode
@@ -2684,11 +2882,15 @@ main() {
 
         # soxr
         #export LDFLAGS="-lomp"
-        install_package "soxr" "cmake" "" "" "" "git" "https://github.com/chirlu/soxr.git" "master" "YES" "YES"
+        install_package "soxr" "cmake" "" "-DBUILD_TESTS=OFF" "" "git" "https://github.com/chirlu/soxr.git" "master" "YES" "YES"
         #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # snappy
-        install_package "snappy" "cmake" "" "-DSNAPPY_BUILD_TESTS=OFF -DSNAPPY_BUILD_BENCHMARKS=OFF" "" "git" "https://github.com/google/snappy.git" "main" "YES" "YES"
+        local var_options=(
+            "-DSNAPPY_BUILD_TESTS=OFF"
+            "-DSNAPPY_BUILD_BENCHMARKS=OFF"
+        )
+        install_package "snappy" "cmake" "" "var_options" "" "git" "https://github.com/google/snappy.git" "main" "YES" "YES"
 
         # speex
         install_package "speex" "meson" "" "" "" "git" "https://gitlab.xiph.org/xiph/speex.git" "master" "YES" "YES"
@@ -2705,7 +2907,13 @@ main() {
         install_package "vmaf" "meson" "" "" "/libvmaf" "git" "https://github.com/Netflix/vmaf.git" "master" "YES" "YES"
 
         # libvpx
-        install_package "libvpx" "configure" "" "" "" "git" "https://chromium.googlesource.com/webm/libvpx.git" "main" "YES" "YES"
+        export TEMP_LDFLAGS="$LDFLAGS"
+        export LDFLAGS="$LDFLAGS -lpthread"
+        local var_options=(
+            "--enable-shared"
+        )
+        install_package "libvpx" "configure" "" "var_options" "" "git" "https://chromium.googlesource.com/webm/libvpx.git" "main" "YES" "YES"
+        export LDFLAGS="$TEMP_LDFLAGS"
 
         # tomli - python
         install_package "tomli" "pip"
@@ -2717,21 +2925,25 @@ main() {
         install_package "pyyaml" "pip"
 
         # mesa
-        install_package "mesa" "meson" "" "-Dplatforms=auto -Dgallium-drivers=auto -Dglx=auto" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
+        #install_package "mesa" "meson" "" "" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
 
         # libepoxy
-        install_package "libepoxy" "meson" "" "-Degl=yes -Dx11=false" "" "git" "https://github.com/mohd-akram/libepoxy.git" "macos-egl" "YES" "YES"
+        #install_package "libepoxy" "meson" "" "" "" "git" "https://github.com/anholt/libepoxy.git" "master" "YES" "YES"
         # install_package "libepoxy" "meson" "" "-Dx11=false -Dtests=false" "" "https" "https://download.gnome.org/sources/libepoxy/1.5/" "libepoxy-1.5.10.tar.xz" "YES" "YES"
 
         # virglrenderer
-        install_package "virglrenderer" "meson" "" "" "" "git" "https://gitlab.freedesktop.org/virgl/virglrenderer.git" "main" "YES" "YES"
+        #install_package "virglrenderer" "meson" "" "" "" "git" "https://gitlab.freedesktop.org/virgl/virglrenderer.git" "main" "YES" "YES"
 
         # vdev2
         install_package "vdev2" "cmake" "" "" "" "git" "https://github.com/virtualsquare/vde-2.git" "master" "YES" "YES"
 
         # libssh (fails with main repository)
         # install_package "libssh" "cmake" "" "-DBUILD_STATIC_LIB=ON -DWITH_SYMBOL_VERSIONING=OFF" "" "git" "git://git.libssh.org/projects/libssh.git" "master" "YES" "YES"
-        install_package "libssh" "cmake" "" "-DBUILD_STATIC_LIB=ON -DWITH_SYMBOL_VERSIONING=OFF" "" "git" "https://github.com/timway/libssh-mirror.git" "master" "YES" "YES"
+        local var_options=(
+            "-DBUILD_STATIC_LIB=ON"
+            "-DWITH_SYMBOL_VERSIONING=OFF"
+        )
+        install_package "libssh" "cmake" "" "" "" "git" "https://github.com/timway/libssh-mirror.git" "master" "YES" "YES"
 
         # capstone
         install_package "capstone" "cmake" "" "" "" "git" "https://github.com/capstone-engine/capstone.git" "next" "YES" "YES"
@@ -2740,50 +2952,80 @@ main() {
         install_package "distlib" "pip"
 
         # gtk
-        install_package "gtk" "meson" "" "-Dx11-backend=true -Dvulkan=disabled -Dmedia-gstreamer=disabled -Dbuild-examples=false -Dbuild-tests=false -Dintrospection=enabled" "" "git" "https://gitlab.gnome.org/GNOME/gtk.git" "main" "YES" "YES"
+        #local var_options=(
+        #    "-Dx11-backend=true"
+        #    "-Dvulkan=disabled"
+        #    "-Dmedia-gstreamer=disabled"
+        #    "-Dbuild-examples=false"
+        #    "-Dbuild-tests=false"
+        #    "-Dintrospection=enabled"
+        #)
+        #install_package "gtk" "meson" "" "var_options" "" "git" "https://gitlab.gnome.org/GNOME/gtk.git" "main" "YES" "YES"
 
-        # gtk3+
-        install_package "gtk3" "meson" "" "-Dx11_backend=true -Dintrospection=true" "" "https" "https://download.gnome.org/sources/gtk+/3.24/" "gtk+-3.24.43.tar.xz" "YES" "YES"
+        ## gtk3+
+        #local var_options=(
+        #    "-Dx11-backend=true"
+        #    "-Dintrospection=enabled"
+        #)
+        #install_package "gtk3" "meson" "" "var_options" "" "https" "https://download.gnome.org/sources/gtk+/3.24/" "gtk+-3.24.43.tar.xz" "YES" "YES"
 
         # gtk-doc
-        install_package "gtk-doc" "meson" "" "-Dtests=false -Dyelp_manual=false" "" "git" "https://gitlab.gnome.org/GNOME/gtk-doc.git" "master" "YES" "YES"
+        #local var_options=(
+        #    "-Dtests=false"
+        #    "-Dyelp_manual=false"
+        #)
+        #install_package "gtk-doc" "meson" "" "var_options" "" "git" "https://gitlab.gnome.org/GNOME/gtk-doc.git" "master" "YES" "YES"
 
         # desktop-file-utils
-        install_package "desktop-file-utils" "meson" "" "" "" "git" "https://gitlab.freedesktop.org/xdg/desktop-file-utils.git" "master" "YES" "YES"
+        #install_package "desktop-file-utils" "meson" "" "" "" "git" "https://gitlab.freedesktop.org/xdg/desktop-file-utils.git" "master" "YES" "YES"
 
         # hicolor-icon-theme (versioned)
-        install_package "hicolor-icon-theme" "meson" "" "" "" "https" "https://ftp2.osuosl.org/pub/blfs/conglomeration/hicolor-icon-theme/" "hicolor-icon-theme-0.18.tar.xz" "YES" "YES"
+        #install_package "hicolor-icon-theme" "meson" "" "" "" "https" "https://ftp2.osuosl.org/pub/blfs/conglomeration/hicolor-icon-theme/" "hicolor-icon-theme-0.18.tar.xz" "YES" "YES"
         # install_package "hicolor-icon-theme" "meson" "" "" "" "https" "https://icon-theme.freedesktop.org/releases/" "hicolor-icon-theme-0.18.tar.xz" "YES" "YES"
 
         # shared-mime-info (versioned)
         #export CFLAGS="-Wno-implicit-function-declaration -Wno-pointer-integer-compare"
-        install_package "shared-mime-info" "meson" "" "" "" "https" "https://gitlab.freedesktop.org/xdg/shared-mime-info/-/archive/2.4/" "shared-mime-info-2.4.tar.bz2" "YES" "YES"
+        #install_package "shared-mime-info" "meson" "" "" "" "https" "https://gitlab.freedesktop.org/xdg/shared-mime-info/-/archive/2.4/" "shared-mime-info-2.4.tar.bz2" "YES" "YES"
         #export CFLAGS=""
 
         # gtkwave
-        install_package "gtkwave" "meson" "" "" "" "git" "https://github.com/gtkwave/gtkwave.git" "master" "YES" "YES"
+        #install_package "gtkwave" "meson" "" "" "" "git" "https://github.com/gtkwave/gtkwave.git" "master" "YES" "YES"
 
         # fastfetch
         install_package "fastfetch" "cmake" "" "" "" "git" "https://github.com/fastfetch-cli/fastfetch.git" "dev" "YES" "YES"
 
-        exit 100
         # xavs2
-        CFLAGS="-Wno-incompatible-pointer-types"
-        install_package "xavs2" "configure_in_source" "" "--host=aarch64-apple-darwin24" "/build/linux" "git" "https://github.com/pkuvcl/xavs2.git" "master" "YES" "YES"
-        CFLAGS=""
+        #CFLAGS="-Wno-incompatible-pointer-types"
+        install_package "xavs2" "configure_in_source" "" "" "/build/linux" "git" "https://github.com/pkuvcl/xavs2.git" "master" "YES" "YES"
+        #CFLAGS=""
 
         # xvidcore (versioned)
+        local var_options=(
+            #"AS=nasm"
+#            "LDFLAGS=$LDFLAGS -lm"
+#            "NASM_FORMAT=elf64"
+#            "SPECIFIC_LDFLAGS=-shared -Wl,-soname,libxvidcore.so.4"
+        )
         install_package "xvidcore" "configure_in_source" "" "" "/build/generic" "https" "https://downloads.xvid.com/downloads/" "xvidcore-1.3.7.tar.bz2" "YES" "YES"
 
         # zimg
         install_package "zimg" "configure" "./autogen.sh" "" "" "git" "https://github.com/sekrit-twc/zimg.git" "master" "YES" "YES"
 
         # zvbi
-        install_package "zvbi" "configure" "./autogen.sh" "" "" "git" "https://github.com/zapping-vbi/zvbi.git" "main" "YES" "YES"
+        local var_options=(
+            "CFLAGS=$CFLAGS -Wno-implicit-function-declaration"
+        )
+        install_package "zvbi" "configure" "./autogen.sh" "var_options" "" "git" "https://github.com/zapping-vbi/zvbi.git" "main" "YES" "YES"
 
-        # openal
+        # openal (versioned until upgrading to libc++ or libstdc++20)-
         #export LDFLAGS="-lmpg123 -lmp3lame"
-        install_package "openal" "cmake" "" "" "" "git" "https://github.com/kcat/openal-soft.git" "master" "YES" "YES"
+        local var_options=(
+            "-DALSOFT_UTILS=OFF"
+            "-DALSOFT_EXAMPLES=OFF"
+            "-DALSOFT_TESTS=OFF"
+            "-DHAVE_GCC_PROTECTED_VISIBILITY=OFF"
+        )
+        install_package "openal" "cmake" "" "var_options" "" "git" "https://github.com/kcat/openal-soft.git" "master" "YES" "YES" "1.24.0"
         #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # pocketsphinx
@@ -2796,74 +3038,157 @@ main() {
         install_package "libgcrypt" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgcrypt/" "libgcrypt-1.11.2.tar.bz2" "YES" "YES"
 
         # libcdio (versioned)
-        install_package "libcdio" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libcdio/" "libcdio-2.1.0.tar.bz2" "YES" "YES"
+        #install_package "libcdio" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libcdio/" "libcdio-2.1.0.tar.bz2" "YES" "YES"
 
         # libcdio-paranoia
-        install_package "libcdio-paranoia" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/libcdio/libcdio-paranoia.git" "master" "YES" "YES"
+        #install_package "libcdio-paranoia" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/libcdio/libcdio-paranoia.git" "master" "YES" "YES"
 
         # chromaprint
-        install_package "chromaprint" "cmake" "" "" "" "git" "https://github.com/acoustid/chromaprint.git" "master" "YES" "YES"
+        install_package "chromaprint" "cmake" "" "-DBUILD_TESTS=OFF" "" "git" "https://github.com/acoustid/chromaprint.git" "master" "YES" "YES"
 
         # vid.stab
         install_package "vid.stab" "cmake" "" "" "" "git" "https://github.com/georgmartius/vid.stab.git" "master" "YES" "YES"
 
         # x264
-        install_package "x264" "configure" "" "--enable-shared --enable-static --enable-strip" "" "git" "https://code.videolan.org/videolan/x264.git" "master" "YES" "YES"
+        local var_options=(
+            "--enable-shared"
+            "--enable-static"
+            "--enable-strip"
+        )
+        install_package "x264" "configure_in_source" "" "var_options" "" "git" "https://code.videolan.org/videolan/x264.git" "master" "YES" "YES"
 
         # libzmq
-        install_package "libzmq" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/zeromq/libzmq.git" "master" "YES" "YES"
+        install_package "libzmq" "cmake" "" "" "" "git" "https://github.com/zeromq/libzmq.git" "master" "YES" "YES"
+
+        # x265
+        install_package "x265" "custom" "" "" "source" "git" "https://bitbucket.org/multicoreware/x265_git.git" "master" "YES" "YES"
+
+        # libvpl
+        export TEMP_CXXFLAGS="$CXXFLAGS"
+        export CXXFLAGS="$CXXFLAGS -D'strncpy_s(dest,dmax,src,len)=strncpy(dest,src,dmax)'"
+        install_package "libvpl" "cmake" "" "" "" "git" "https://github.com/intel/libvpl.git" "main" "YES" "YES"
+        export CXXFLAGS="$TEMP_CXXFLAGS"
+
+        # opencl
+        install_package "opencl" "cmake" "" "" "" "git" "https://github.com/KhronosGroup/OpenCL-SDK.git" "main" "YES" "YES"
 
         # ffmpeg
-        # --enable-libx265 removed use videotoolbox
+        # dropped  --enable-libcdio
         # --extra-cflags=-I$INSTALL_PREFIX/include --extra-ldflags=-L$INSTALL_PREFIX/lib removed
         #export LDFLAGS="-logg -lvorbis -lsharpyuv -lwebp -Wl,-rpath,\$ORIGIN/../lib"
-        install_package "ffmpeg" "configure" "" "--enable-gpl --enable-version3 --enable-nonfree --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libcdio --enable-libdav1d --enable-libfdk-aac --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libgme --enable-libharfbuzz --enable-libjxl --enable-libmp3lame --enable-libopencore-amrwb --enable-opengl --enable-libopus  --enable-libopenjpeg --enable-libopenmpt --enable-libsvtav1 --enable-libtheora --enable-libxvid  --enable-libsnappy --enable-libmysofa --enable-libopencore-amrnb --enable-libmodplug --enable-libqrencode --enable-libshine --enable-librubberband --enable-libsoxr --enable-libsnappy --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvo-amrwbenc --enable-libvpx --enable-libwebp --enable-libx264 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzvbi --enable-gcrypt --enable-gmp --enable-gnutls --enable-openal --enable-opencl --enable-pocketsphinx  --enable-libopenh264 --enable-libvmaf --enable-libxavs2 --enable-libzmq" "" "git" "https://git.ffmpeg.org/ffmpeg.git" "master" "YES" "YES"
+        local var_options=(
+            "--cc=$CC"
+            "--cxx=$CXX"
+            "--extra-libs=-lm"
+            "--extra-ldflags=-Wl,--allow-shlib-undefined"
+            "--enable-gpl"
+            "--enable-version3"
+            "--enable-nonfree"
+            "--enable-libaom"
+            "--enable-libass"
+            "--enable-libbluray"
+            "--enable-libbs2b"
+            "--enable-libdav1d"
+            "--enable-libfdk-aac"
+            "--enable-libflite"
+            "--enable-libfontconfig"
+            "--enable-libfreetype"
+            "--enable-libfribidi"
+            "--enable-libgme"
+            "--enable-libharfbuzz"
+            "--enable-libjxl"
+            "--enable-libmp3lame"
+            "--enable-libopencore-amrwb"
+#            "--enable-opengl"
+            "--enable-libopus"
+            "--enable-libopenjpeg"
+            "--enable-libopenmpt"
+            "--enable-libsvtav1"
+            "--enable-libtheora"
+            "--enable-libvpl"
+            "--enable-libxvid"
+            "--enable-libsnappy"
+            "--enable-libmysofa"
+            "--enable-libopencore-amrnb"
+            "--enable-libmodplug"
+            "--enable-libqrencode"
+            "--enable-libshine"
+            "--enable-librubberband"
+            "--enable-libsoxr"
+            "--enable-libsnappy"
+            "--enable-libspeex"
+            "--enable-libtheora"
+            "--enable-libtwolame"
+            "--enable-libvidstab"
+            "--enable-libvorbis"
+            "--enable-libvo-amrwbenc"
+            "--enable-libvpx"
+            "--enable-libwebp"
+            "--enable-libx264"
+            "--enable-libxml2"
+            "--enable-libxvid"
+            -"-enable-libzimg"
+            "--enable-libzvbi"
+            "--enable-gcrypt"
+            "--enable-gmp"
+            "--enable-gnutls"
+            "--enable-openal"
+            "--enable-opencl"
+            "--enable-pocketsphinx"
+            "--enable-libopenh264"
+            "--enable-libx265"
+            "--enable-libvmaf"
+            "--enable-libxavs2"
+            --enable-libzmq
+        )
+        install_package "ffmpeg" "configure" "" "var_options" "" "git" "https://git.ffmpeg.org/ffmpeg.git" "master" "YES" "YES"
         #export LDFLAGS="-Wl,-rpath,\$ORIGIN/../lib"
 
         # qemu
-        install_package "qemu" "configure" "" \
-            " \
-                --qemu-ga-distro=DragonFlyBSD \
-                --enable-opengl \
-                --enable-virglrenderer \
-                --enable-slirp \
-                --enable-capstone \
-                --enable-curses \
-                --enable-libssh \
-                --enable-vde \
-                --enable-virtfs \
-                --enable-zstd \
-                --extra-cflags=-DNCURSES_WIDECHAR=1 \
-                --enable-gtk \
-                --enable-sdl \
-            " "" "git" "https://github.com/qemu-project/qemu.git" "master" "YES" "YES"
+        local var_options=(
+            "--qemu-ga-distro=DragonFlyBSD"
+#            "--enable-opengl"
+#            "--enable-virglrenderer"
+            "--enable-slirp"
+            "--enable-capstone"
+            "--enable-curses"
+            "--enable-libssh"
+            "--enable-vde"
+            "--enable-virtfs"
+            "--enable-zstd"
+            "--enable-nvmm"
+            "--extra-cflags=-DNCURSES_WIDECHAR=1"
+#            "--enable-gtk"
+#            "--enable-sdl"
+        )
+        install_package "qemu" "configure" "" "var_options" "" "git" "https://github.com/qemu/qemu.git" "master" "YES" "YES"
 
         # sdl2
-        install_package "sdl2" "cmake" "" "" "" "git" "https://github.com/libsdl-org/SDL.git" "SDL2" "YES" "YES"
+#        install_package "sdl2" "cmake" "" "" "" "git" "https://github.com/libsdl-org/SDL.git" "SDL2" "YES" "YES"
 
         # bochs
-        install_package "bochs" "configure" "" \
-            " \
-                --enable-a20-pin \
-                --enable-gdb-stub \
-                --enable-pci \
-                --enable-usb \
-                --enable-usb-ohci \
-                --with-sdl2 \
-            " "/bochs" "git" "https://github.com/bochs-emu/Bochs.git" "master" "YES" "YES"
+        local var_options=(
+            "--enable-a20-pin"
+            "--enable-gdb-stub"
+            "--enable-pci"
+            "--enable-usb"
+            "--enable-usb-ohci"
+#            "--with-sdl2"
+        )
+        install_package "bochs" "configure" "" "" "/bochs" "git" "https://github.com/bochs-emu/Bochs.git" "master" "YES" "YES"
 
         # mdcat
         install_package "mdcat" "cargo" "" "" "" "git" "https://github.com/swsnr/mdcat.git" "main" "YES" "YES"
-        add_rpath "$INSTALL_PREFIX/bin/mdcat" "\$ORIGIN/../lib"
+        # add_rpath "$INSTALL_PREFIX/bin/mdcat" "\$ORIGIN/../lib"
 
         # eza
         install_package "eza" "cargo" "" "" "" "git" "https://github.com/eza-community/eza.git" "main" "YES" "YES"
 
         # jupyterlab - python
-        install_package "jupyterlab" "pip" "binary"
+        install_package "jupyterlab" "pip"
 
         # voila - python
-        install_package "voila" "pip" "binary"
+        install_package "voila" "pip"
 
         # matplotlib - python
         install_package "matplotlib" "pip"
@@ -2879,16 +3204,16 @@ main() {
 
         # scikit-learn - python
         # binary avoids installing a fortran compiler
-        install_package "scikit-learn" "pip" "binary"
+        install_package "scikit-learn" "pip"
 
         # torch - python
-        install_package "torch" "pip" "version" "2.9.0" "https://download.pytorch.org/whl/test/"
+        install_package "torch" "pip" #"version" "2.10.0" "https://download.pytorch.org/whl/test/"
 
         # torchvision - python
-        install_package "torchvision" "pip" "version" "0.24.0" "https://download.pytorch.org/whl/test/"
+        install_package "torchvision" "pip" #"version" "0.25.0" "https://download.pytorch.org/whl/test/"
 
         # torchaudio - python
-        install_package "torchaudio" "pip" "version" "2.9.0" "https://download.pytorch.org/whl/test/"
+        install_package "torchaudio" "pip" #"version" "2.10.0" "https://download.pytorch.org/whl/test/"
 
         # libdaq
         install_package "libdaq" "configure_in_source" "" "" "" "git" "https://github.com/snort3/libdaq.git" "master" "YES" "YES"
@@ -2927,13 +3252,13 @@ main() {
         # snort_extra - cmake
         install_package "snort_extra" "cmake" "" "" "" "git" "https://github.com/snort3/snort3_extra.git" "master" "YES" "YES"
 
+        exit 100
         # zig (versioned)
         install_package "zig" "prebuilt" "" "" "" "https" "https://ziglang.org/builds/" "zig-aarch64-macos-0.16.0-dev.1484+d0ba6642b.tar.xz" "YES" "YES"
 
         # zls (versioned to zig) - zig
         install_package "zls" "zig" "" "" "" "git" "https://github.com/zigtools/zls.git" "master" "YES" "YES"
 
-        exit 100
         # deno (versioned)
         install_package "deno" "prebuilt" "" "" "" "https" "https://github.com/denoland/deno/releases/download/v2.6.1/" "deno-aarch64-apple-darwin.zip" "YES" "NO"
 
