@@ -1012,8 +1012,13 @@ install_cmake() {
             "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON"
             "-DCMAKE_INSTALL_RPATH_USE_LINK_RPATH=OFF"
             "-DCMAKE_BUILD_TYPE=Release"
-            "-DBUILD_SHARED_LIBS=TRUE"
         )
+        if [[ $package == "abseil" ]]; then
+            cmake_options+="-DBUILD_SHARED_LIBS=OFF"
+            cmake_options+="-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+        else
+            cmake_options+="-DBUILD_SHARED_LIBS=TRUE"
+        fi
         if [[ $tool_options =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && (( ${+parameters[$tool_options]} )); then
                 cmake_options+=( "${(@P)tool_options}" )
         elif [[ -n $tool_options ]]; then
@@ -1404,14 +1409,17 @@ install_custom_gn() {
     local source_directory="$2"
     local build_directory="$3"
     if [[ $INSTALL_COMMAND == "install" ]]; then
-        cd "$source_directory"
         print_status $package "INFO" "Configuring"
-        $INSTALL_PREFIX/bin/python3 build/gen.py
+        cd "$source_directory"
+        mkdir -p "$build_directory"
+        $INSTALL_PREFIX/bin/python3 build/gen.py --use-lto --out-path="$build_directory"
         print_status $package "INFO" "Building"
         $INSTALL_PREFIX/bin/ninja -C "$build_directory"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
-        exit 120
+        install -d $INSTALL_PREFIX/bin
+        install -m 755 "$build_directory/gn" $INSTALL_PREFIX/bin/gn
+        strip $INSTALL_PREFIX/bin/gn
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
@@ -1908,6 +1916,44 @@ pre_patch() {
                 print_status $package "INFO" "Patching"
                 perl -pi -e 'print "#include <sys/sysctl.h>\n#include <sys/user.h>\n" if $. == 1' "$source_directory/libs/process/src/ext/env.cpp"
                 perl -pi -e 'print "#include <fcntl.h>\n" if $. == 1' "$source_directory/libs/process/src/pid.cpp"
+                ;;
+            zig)
+                print_status $package "INFO" "Patching"
+                sed -i '' 's/set(ZIG_LLVM_REQUIRED_TARGETS "AArch64;AMDGPU;ARM;AVR;BPF;Hexagon;Lanai;LoongArch;Mips;MSP430;NVPTX;PowerPC;RISCV;SPIRV;Sparc;SystemZ;VE;WebAssembly;X86;XCore")/set(ZIG_LLVM_REQUIRED_TARGETS "X86")/' "$source_directory/cmake/Findllvm.cmake"
+                ;;
+            abseil)
+                print_status $package "INFO" "Patching"
+                sed -i '' 's|#ifdef __NetBSD__|#ifdef __DragonFly__\n#include <sys/lwp.h>\n#endif\n\n#ifdef __NetBSD__|g' "$source_directory/absl/base/internal/sysinfo.cc"
+                sed -i '' 's/#elif defined(__NetBSD__)/#elif defined(__DragonFly__)\n\npid_t GetTID() { return lwp_gettid(); }\n\n#elif defined(__NetBSD__)/g' "$source_directory/absl/base/internal/sysinfo.cc"
+                sed -i '' 's/#if defined(__FreeBSD__)/& || defined(__DragonFly__)/' "$source_directory/absl/debugging/internal/vdso_support.cc"
+                ;;
+            gn)
+                print_status $package "INFO" "Patching"
+                sed -i '' "s|      self._platform = 'openbsd'|&\n    elif self._platform.startswith('dragonfly'):\n      self._platform = 'dragonfly'|" "$source_directory/build/gen.py"
+                sed -i '' "s|'netbsd', 'openbsd', |'netbsd', 'openbsd', 'dragonfly', |" "$source_directory/build/gen.py"
+                sed -i '' "s|'msys', 'netbsd', |'msys', 'netbsd', 'dragonfly', |" "$source_directory/build/gen.py"
+                sed -i '' "s|      'netbsd': 'build_linux.ninja.template',|&\n      'dragonfly': 'build_linux.ninja.template',|" "$source_directory/build/gen.py"
+                sed -i '' "s|#define OS_SERENITY 1|&\n#elif defined(__DragonFly__)\n#define OS_DRAGONFLY 1|" "$source_directory/src/util/build_config.h"
+                sed -i '' "s/defined(OS_FREEBSD) || /&defined(OS_DRAGONFLY) || /g" "$source_directory/src/util/build_config.h"
+                sed -i '' "s|  os = \"serenity\";|&\n#elif defined(OS_DRAGONFLY)\n  os = \"dragonfly\";|" "$source_directory/src/gn/args.cc"
+                sed -i '' "s/if defined(OS_FREEBSD)/& || defined(OS_DRAGONFLY)/g" "$source_directory/src/util/exe_path.cc"
+                find "$source_directory" -name "*.cc" -print0 | xargs -0 sed -i '' 's/\.starts_with(\([^)]*\))/.find(\1) == 0/g'
+                sed -i '' 's/path.ends_with(".xcassets")/path.size() >= 9 \&\& path.substr(path.size() - 9) == ".xcassets"/g' "$source_directory/src/gn/bundle_data.cc"
+                sed -i '' 's/ident.ends_with("deps")/(ident.size() >= 4 \&\& ident.substr(ident.size() - 4) == "deps")/g' "$source_directory/src/gn/command_format.cc"
+                sed -i '' 's/ident.ends_with("sources")/(ident.size() >= 7 \&\& ident.substr(ident.size() - 7) == "sources")/g' "$source_directory/src/gn/command_format.cc"
+                sed -i '' '/#include <ranges>/d' "$source_directory/src/gn/rust_project_writer.cc"
+                sed -i '' 's/std::ranges::sort(include_dirs,/std::sort(include_dirs.begin(), include_dirs.end(),/g' "$source_directory/src/gn/rust_project_writer.cc"
+                sed -i '' 's/std::ranges::unique(include_dirs)/std::unique(include_dirs.begin(), include_dirs.end())/g' "$source_directory/src/gn/rust_project_writer.cc"
+                sed -i '' 's/std::unique(include_dirs.begin(), include_dirs.end()).begin()/std::unique(include_dirs.begin(), include_dirs.end())/' "$source_directory/src/gn/rust_project_writer.cc"
+                sed -i '' 's/source_root.ends_with("\/")/(source_root.size() >= 1 \&\& source_root.substr(source_root.size() - 1) == "\/")/g' "$source_directory/src/gn/filesystem_utils.cc"
+                sed -i '' 's/!str.find("\\"") == 0 || !str.ends_with("\\"")/str.find("\\"") != 0 || str.size() < 1 || str.substr(str.size()-1) != "\\""/' "$source_directory/src/gn/parse_tree.cc"
+                sed -i '' 's/!name.find(tool->output_prefix() == 0)/name.find(tool->output_prefix()) != 0/' "$source_directory/src/gn/target.cc"
+                sed -i '' 's/folder->path.find(parents.back() == 0->path)/folder->path.find(parents.back()->path) == 0/' "$source_directory/src/gn/visual_studio_writer.cc"
+                sed -i '' '/#include "gn\/xcode_writer.h"/a\
+                static bool EndsWith(const std::string\& s, const std::string\& suffix) { return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), std::string::npos, suffix) == 0; }' "$source_directory/src/gn/xcode_writer.cc"
+                sed -i '' 's/target->label().name().ends_with(\([^)]*\))/EndsWith(target->label().name(), \1)/g' "$source_directory/src/gn/xcode_writer.cc"
+                sed -i '' 's/file_name.ends_with(\([^)]*\))/EndsWith(file_name, \1)/g' "$source_directory/src/gn/xcode_writer.cc"
+                perl -0777 -i -pe 's/std::ranges::all_of\(\s*([a-zA-Z0-9_]+),/std::all_of($1.begin(), $1.end(),/g' "$source_directory/src/gn/parse_tree_unittest.cc"
                 ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -3397,14 +3443,24 @@ main() {
         # snort_extra - cmake
         install_package "snort_extra" "cmake" "" "" "" "git" "https://github.com/snort3/snort3_extra.git" "master" "YES" "YES"
 
-        # zig -
-        install_package "zig" "cmake" "" "" "" "git" "https://codeberg.org/ziglang/zig.git" "master" "YES" "YES"
+        # zig - (requires llvm with all targets)
+#        install_package "zig" "cmake" "" "-DCMAKE_PREFIX_PATH=$INSTALL_PREFIX" "" "git" "https://codeberg.org/ziglang/zig.git" "master" "YES" "YES"
 
         # zls (versioned to zig) - zig
-        install_package "zls" "zig" "" "" "" "git" "https://github.com/zigtools/zls.git" "master" "YES" "YES"
+#        install_package "zls" "zig" "" "" "" "git" "https://github.com/zigtools/zls.git" "master" "YES" "YES"
+
+        # abseil - cmake
+        export TEMP_CXXFLAGS="$CXXFLAGS"
+        export CXXFLAGS="$CXXFLAGS -D_XOPEN_SOURCE=700 -D__BSD_VISIBLE=1"
+        install_package "abseil" "cmake" "" "" "" "git" "https://github.com/abseil/abseil-cpp.git" "master" "YES" "YES"
+        export CXXFLAGS="$TEMP_CXXFLAGS"
 
         # protobuf -
-        install_package "protobuf" "cmake" "" "" "" "git" "https://github.com/protocolbuffers/protobuf.git" "main" "YES" "YES"
+	    local var_options=(
+            "-Dprotobuf_BUILD_TESTS=NO"
+            "-Dprotobuf_BUILD_EXAMPLES=NO"
+        )
+        install_package "protobuf" "cmake" "" "var_options" "" "git" "https://github.com/protocolbuffers/protobuf.git" "main" "YES" "YES"
 
         # gn -
         install_package "gn" "custom" "" "" "" "git" "https://gn.googlesource.com/gn" "main" "YES" "YES"
