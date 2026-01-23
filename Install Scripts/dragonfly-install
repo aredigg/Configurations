@@ -936,7 +936,7 @@ install_make_only() {
     local custom_prefix="$2"
     local tool_options=$3
     local source_directory="$4"
-    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib:$INSTALL_PREFIX/lib'"
+    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,\$ORIGIN/../lib:$INSTALL_PREFIX/lib"
     local make_cmd="make"
     if command -v gnumake >/dev/null 2>&1; then
         make_cmd="gnumake"
@@ -1194,7 +1194,7 @@ install_pip() {
     local mode_options="$3"
     local extra_url="$4"
     local source_directory="$5"
-    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'$ORIGIN/../lib:$INSTALL_PREFIX/lib'"
+    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,\$ORIGIN/../lib:$INSTALL_PREFIX/lib"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         if [[ $package == "pip" ]]; then
             curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py
@@ -1626,6 +1626,8 @@ pre_patch() {
             snort)
                 print_status $package "INFO" "Patching"
                 sed -i '' "s| -pagezero_size 10000 -image_base 100000000\"|\"|g" "${2}/cmake/FindLuaJIT.cmake"
+                sed -i '' 's/#ifdef __FreeBSD__/#if defined(__FreeBSD__) || defined(__DragonFly__)/g' "$source_directory/src/utils/endian.h"
+                sed -i '' 's/#if defined(__FreeBSD__)/#if defined(__FreeBSD__) || defined(__DragonFly__)/g' "$source_directory/src/network_inspectors/appid/service_plugins/service_rpc.cc"
                 ;;
             vectorscan)
                 print_status $package "INFO" "Patching"
@@ -1735,6 +1737,12 @@ pre_patch() {
                 sed -i '' "s|#include <cmath>|#include <cmath>\nusing std::isinf;\nusing std::isnan;|" "$source_directory/scipy/spatial/ckdtree/src/ckdtree_decl.h"
                 #sed -i '' "s|#include <cmath>|#include <cmath>\n#define isinf __builtin_isinf\n#define isnan __builtin_isnan|" "$source_directory/scipy/spatial/ckdtree/src/ckdtree_decl.h"
                 #sed -i '' -e '/using std::isinf;/d' -e '/using std::isnan;/d' -e 's/std::isinf/isinf/g' -e 's/std::isnan/isnan/g' $source_directory/scipy/spatial/ckdtree/src/*.cxx
+                ;;
+            pandas)
+                sed -i '' 's/window_size \/ 2/window_size \/\/ 2/' "$source_directory/pandas/_libs/window/indexers.pyx"
+                perl -pi -e 'print "cdef extern from *:\n    \"\"\"\n    #ifdef __cplusplus\n    #include <cmath>\n    using std::isnan;\n    using std::signbit;\n    using std::isinf;\n    using std::isfinite;\n    #endif\n    \"\"\"\n" if $. == 1' "$source_directory/pandas/_libs/window/aggregations.pyx"
+                perl -pi -e 'print "cdef extern from *:\n    \"\"\"\n    #ifdef __cplusplus\n    #include <cmath>\n    using std::isnan;\n    using std::signbit;\n    using std::isinf;\n    using std::isfinite;\n    #endif\n    \"\"\"\n" if $. == 1' "$source_directory/pandas/_libs/window/indexers.pyx"
+                #perl -pi -e "s/^fs = import\('fs'\)/add_project_arguments('-Dsignbit=std::signbit', '-Disnan=std::isnan', '-Disinf=std::isinf', '-Disfinite=std::isfinite', language: 'cpp')\nfs = import('fs')/" "$source_directory/pandas/_libs/window/meson.build"
                 ;;
             p11-kit)
                 print_status $package "INFO" "Patching"
@@ -1874,12 +1882,32 @@ pre_patch() {
                 print "\n[patch.crates-io]\nsystemstat = { path = \"$source_directory/../systemstat\" }" >> "$source_directory/Cargo.toml"
                 ;;
             notify-rs)
+                print_status $package "INFO" "Patching"
                 sed -i '' 's/target_os = "dragonflybsd"/target_os = "dragonfly"/' "$source_directory/notify/Cargo.toml"
                 ;;
             watchfiles)
                 print_status $package "INFO" "Patching"
                 sed -i '' 's/notify = { version = "8.0.0" }/notify = { version = "8.2.0" }/' "$source_directory/Cargo.toml"
                 print "\n[patch.crates-io]\nnotify = { path = \"$source_directory/../notify-rs/notify\" }" >> "$source_directory/Cargo.toml"
+                ;;
+            libdaq)
+                print_status $package "INFO" "Patching"
+                perl -pi -e 'print "#include <sys/socket.h>\n" if $. == 1' "$source_directory/api/daq.h"
+                perl -pi -e 'print "#include <sys/socket.h>\n#include <arpa/inet.h>\n" if $. == 1' "$source_directory/modules/trace/daq_trace.c"
+                ;;
+            hwloc)
+                print_status $package "INFO" "Patching"
+                sed -i '' '1s|.*|#!/usr/bin/env -S zsh --emulate sh|' "$source_directory/autogen.sh"
+                ;;
+            jemalloc)
+                print_status $package "INFO" "Patching"
+                perl -pi -e 's/#  define JEMALLOC_NOTHROW JEMALLOC_ATTR\(nothrow\)/#  if defined(__DragonFly__)\n#    define JEMALLOC_NOTHROW\n#  else\n#    define JEMALLOC_NOTHROW JEMALLOC_ATTR(nothrow)\n#  endif/' "$source_directory/include/jemalloc/jemalloc_macros.h.in"
+                sed -i '' 's/defined(__FreeBSD__)/defined(__FreeBSD__) || defined(__DragonFly__)/g' "$source_directory/include/jemalloc/jemalloc_macros.h.in"
+                ;;
+            boost)
+                print_status $package "INFO" "Patching"
+                perl -pi -e 'print "#include <sys/sysctl.h>\n#include <sys/user.h>\n" if $. == 1' "$source_directory/libs/process/src/ext/env.cpp"
+                perl -pi -e 'print "#include <fcntl.h>\n" if $. == 1' "$source_directory/libs/process/src/pid.cpp"
                 ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -3306,11 +3334,11 @@ main() {
         # matplotlib - python
         install_package "matplotlib" "pip"
 
-        export TEMP_CXXFLAGS="$CXXFLAGS"
-        export CXXFLAGS="$CXXFLAGS -Dsignbit=std::signbit -Disnan=std::isnan -Disinf=std::isinf -Disfinite=std::isfinite"
+        # versioneer - python
+        install_package "versioneer" "pip"
+
         # pandas - python
-        install_package "pandas" "pip"
-        export CXXFLAGS="$TEMP_CXXFLAGS"
+        install_package "pandas" "pip" "local" "" "" "https" "https://files.pythonhosted.org/packages/source/p/pandas/" "pandas-3.0.0.tar.gz" "YES" "YES"
 
         # pillow - python
         install_package "pillow" "pip"
@@ -3320,16 +3348,16 @@ main() {
 
         # scikit-learn - python
         # binary avoids installing a fortran compiler
-        install_package "scikit-learn" "pip"
+#        install_package "scikit-learn" "pip"
 
         # torch - python
-        install_package "torch" "pip" #"version" "2.10.0" "https://download.pytorch.org/whl/test/"
+#        install_package "torch" "pip" #"version" "2.10.0" "https://download.pytorch.org/whl/test/"
 
         # torchvision - python
-        install_package "torchvision" "pip" #"version" "0.25.0" "https://download.pytorch.org/whl/test/"
+#        install_package "torchvision" "pip" #"version" "0.25.0" "https://download.pytorch.org/whl/test/"
 
         # torchaudio - python
-        install_package "torchaudio" "pip" #"version" "2.10.0" "https://download.pytorch.org/whl/test/"
+#        install_package "torchaudio" "pip" #"version" "2.10.0" "https://download.pytorch.org/whl/test/"
 
         # libdaq
         install_package "libdaq" "configure_in_source" "" "" "" "git" "https://github.com/snort3/libdaq.git" "master" "YES" "YES"
@@ -3338,6 +3366,7 @@ main() {
         install_package "hwloc" "configure" "./autogen.sh" "" "" "git" "https://github.com/open-mpi/hwloc.git" "master" "YES" "YES"
 
         # jemalloc
+        # --with-jemalloc-prefix=je_
         install_package "jemalloc" "configure" "./autogen.sh" "" "" "git" "https://github.com/jemalloc/jemalloc.git" "dev" "YES" "YES"
 
         # libpcap - cmake
@@ -3356,11 +3385,14 @@ main() {
         install_package "flex" "configure" "" "" "" "https" "https://github.com/westes/flex/releases/download/v2.6.4/" "flex-2.6.4.tar.gz" "YES" "YES"
 
         # luajit (v2) -
-        install_package "luajit" "make_only" "" "" "" "git" "https://luajit.org/git/luajit.git" "v2.1" "YES" "YES"
+        local var_options=(
+            "CC=$INSTALL_PREFIX/bin/clang"
+            "HOST_CC=$INSTALL_PREFIX/bin/clang"
+        )
+        install_package "luajit" "make_only" "" "var_options" "" "git" "https://luajit.org/git/luajit.git" "v2.1" "YES" "YES"
 
         # snort - cmake
         install_package "snort" "cmake" "" "-DDNET_INCLUDE_DIR=$INSTALL_PREFIX/include/dnet" "" "git" "https://github.com/snort3/snort3.git" "master" "YES" "YES"
-        chmod o+r /dev/bpf*
 
         # snort_extra - cmake
         install_package "snort_extra" "cmake" "" "" "" "git" "https://github.com/snort3/snort3_extra.git" "master" "YES" "YES"
@@ -3505,6 +3537,9 @@ main() {
 
         # golang (versioned)
         install_package "golang" "prebuilt" "" "" "" "https" "https://go.dev/dl/" "go1.25.6.dragonfly-amd64.tar.gz" "YES" "NO"
+
+        # fzf - golang
+        install_package "fzf" "make_only" "" "" "" "git" "https://github.com/junegunn/fzf.git" "master" "YES" "YES"
 
         # d2 (versioned) - building from source later
         #install_package "d2" "prebuilt" "" "" "" "https" "https://github.com/terrastruct/d2/releases/download/v0.7.1/" "d2-v0.7.1-macos-arm64.tar.gz" "YES" "NO"
