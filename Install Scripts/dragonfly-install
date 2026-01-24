@@ -936,7 +936,7 @@ install_make_only() {
     local custom_prefix="$2"
     local tool_options=$3
     local source_directory="$4"
-    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,\$ORIGIN/../lib:$INSTALL_PREFIX/lib"
+    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,\$ORIGIN/../lib:$INSTALL_PREFIX/lib:/usr/lib/gcc80"
     local make_cmd="make"
     if command -v gnumake >/dev/null 2>&1; then
         make_cmd="gnumake"
@@ -1263,7 +1263,7 @@ install_cargo() {
         cd "$build_directory"
         print_status $package "INFO" "Building"
         $INSTALL_PREFIX/bin/cargo build --release --manifest-path "$source_directory/Cargo.toml"
-        if [[ $package == "systemstat" || $package == "notify-rs" ]]; then
+        if [[ $package == "systemstat" || $package == "notify-rs" || $package == "rustyv8" ]]; then
             print_status $package "INFO" "Library"
         else
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
@@ -1517,6 +1517,9 @@ install_package() {
                 ;;
             custom)
                 install_custom_$package "$package" "$source_directory" "$build_directory"
+                ;;
+            *)
+                exit 99
                 ;;
         esac
         if [[ $INSTALL_COMMAND != "remove" ]]; then
@@ -1954,6 +1957,34 @@ pre_patch() {
                 sed -i '' 's/target->label().name().ends_with(\([^)]*\))/EndsWith(target->label().name(), \1)/g' "$source_directory/src/gn/xcode_writer.cc"
                 sed -i '' 's/file_name.ends_with(\([^)]*\))/EndsWith(file_name, \1)/g' "$source_directory/src/gn/xcode_writer.cc"
                 perl -0777 -i -pe 's/std::ranges::all_of\(\s*([a-zA-Z0-9_]+),/std::all_of($1.begin(), $1.end(),/g' "$source_directory/src/gn/parse_tree_unittest.cc"
+                ;;
+            rustyv8)
+                perl -pi -e 's/host_os = platform.system\(\).lower\(\)/host_os = "linux"/' "$source_directory/tools/rust_toolchain.py"
+                sed -i '' 's/target_os == "linux"/target_os == "linux" || target_os == "dragonfly"/g' "$source_directory/build.rs"
+                sed -i '' 's/target_os == "linux" {/target_os == "linux" || target_os == "dragonfly" {/g' "$source_directory/build.rs"
+                ;;
+            deno)
+                print_status $package "INFO" "Patching"
+                print "\n[patch.crates-io]\nv8 = { path = \"$source_directory/../rustyv8\" }" >> "$source_directory/Cargo.toml"
+                ;;
+            node)
+                print_status $package "INFO" "Patching"
+                sed -i '' 's/#include <version>/\/\/ #include <version>/g' "$source_directory/deps/v8/third_party/simdutf/simdutf.h"
+                sed -i '' 's|#ifdef __NetBSD__|#ifdef __DragonFly__\n#include <sys/lwp.h>\n#endif\n\n#ifdef __NetBSD__|g' "$source_directory/deps/v8/third_party/abseil-cpp/absl/base/internal/sysinfo.cc"
+                sed -i '' 's/#elif defined(__NetBSD__)/#elif defined(__DragonFly__)\n\npid_t GetTID() { return lwp_gettid(); }\n\n#elif defined(__NetBSD__)/g' "$source_directory/deps/v8/third_party/abseil-cpp/absl/base/internal/sysinfo.cc"
+                sed -i '' 's/#if defined(__FreeBSD__)/& || defined(__DragonFly__)/' "$source_directory/deps/v8/third_party/abseil-cpp/absl/debugging/internal/vdso_support.cc"
+                sed -i '' 's|#include "absl/container/internal/hashtablez_sampler.h"|#include "hashtablez_sampler.h"|' "$source_directory/deps/v8/third_party/abseil-cpp/absl/container/internal/hashtablez_sampler.cc"
+                sed -i '' 's|#include "absl/container/internal/raw_hash_set.h"|#include "raw_hash_set.h"|' "$source_directory/deps/v8/third_party/abseil-cpp/absl/container/internal/raw_hash_set.cc"
+                ;;
+            quickjs)
+                print_status $package "INFO" "Patching"
+                perl -0777 -pi -e 's/(ifeq \(\$\(shell uname -s\),FreeBSD\)\nCONFIG_FREEBSD=y\nendif)/$1\nifeq (\$(shell uname -s),DragonFly)\nCONFIG_DRAGONFLY=y\nCONFIG_CLANG=y\nCONFIG_DEFAULT_AR=y\nCONFIG_LTO=\nendif/s' "$source_directory/Makefile"
+                perl -0777 -pi -e 's/ifndef CONFIG_WIN32\nLIBS\+=-ldl\nendif/ifndef CONFIG_WIN32\nifndef CONFIG_DRAGONFLY\nLIBS+=-ldl\nendif\nendif/s' "$source_directory/Makefile"
+                perl -pi -e 's/#include <stdlib.h>/#include <stdlib.h>\n#if defined(__DragonFly__)\nextern char **environ;\ntypedef void (*sighandler_t)(int);\n#endif/' "$source_directory/quickjs-libc.c"
+                ;;
+            ruff)
+                print_status $package "INFO" "Patching"
+                print "\n[patch.crates-io]\nnotify = { path = \"$source_directory/../notify-rs/notify\" }" >> "$source_directory/Cargo.toml"
                 ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -3465,12 +3496,38 @@ main() {
         # gn -
         install_package "gn" "custom" "" "" "" "git" "https://gn.googlesource.com/gn" "main" "YES" "YES"
 
+        # rustyv8 - rust
+        #export V8_FROM_SOURCE=1
+        #export GN_ARGS='target_os="linux"'
+        #install_package "rustyv8" "cargo" "" "" "" "git" "https://github.com/denoland/rusty_v8.git" "main" "YES" "YES"
+
         # deno (versioned)
-        export V8_FROM_SOURCE=1
-        install_package "deno" "cargo" "" "" "" "git" "https://github.com/denoland/deno.git" "main" "YES" "NO"
+        #install_package "deno" "cargo" "" "" "" "git" "https://github.com/denoland/deno.git" "main" "YES" "YES"
+
+        # icu4c
+        install_package "icu4c" "configure" "" "" "icu4c/source" "git" "https://github.com/unicode-org/icu.git" "main" "YES" "YES"
+
+        # node
+        # export TEMP_CXXFLAGS="$CXXFLAGS"
+        # export CXXFLAGS="-I$SOURCES_DIRECTORY/node/deps/v8/third_party/abseil-cpp $CXXFLAGS -std=gnu++17"
+        # local var_options=(
+        #        "--shared-brotli"
+        #        "--shared-cares"
+        #        "--shared-libuv"
+        #        "--shared-nghttp2"
+        #        "--shared-zlib"
+        #        "--shared-openssl"
+        #        "--enable-lto"
+        #        "--with-intl=system-icu"
+        #    )
+        # install_package "node" "configure_in_source" "" "var_options" "" "git" "https://github.com/nodejs/node.git" "main" "YES" "YES"
+        # export CXXFLAGS="$TEMP_CXXFLAGS"
+
+        # quickjs
+        install_package "quickjs" "make_only" "" "" "" "git" "https://github.com/bellard/quickjs.git" "master" "YES" "YES"
 
         # ruff - python
-        install_package "ruff" "pip"
+        install_package "ruff" "pip" "local" "" "" "https" "https://files.pythonhosted.org/packages/source/r/ruff/" "ruff-0.14.14.tar.gz" "YES" "YES"
 
         # pyright - python
         install_package "pyright" "pip"
@@ -3507,6 +3564,9 @@ main() {
 
         # tensorflow - python (do not support 3.14)
         # install_package "tf-nightly" "pip"
+
+        # htop
+        install_package "htop" "configure" "" "" "" "git" "https://github.com/htop-dev/htop.git" "main" "YES" "YES"
 
         # opencv-python - python
         install_package "opencv-python" "pip" "binary"
@@ -3555,13 +3615,13 @@ main() {
         install_package "pyarrow" "pip" "binary"
 
 	    # mlx - python
-        install_package "mlx" "pip" "binary"
+        #install_package "mlx" "pip" "binary"
 
         # mlx-lm - python
-        install_package "mlx-lm" "pip"
+        #install_package "mlx-lm" "pip"
 
         # mlx-vlm - python
-        install_package "mlx-vlm" "pip"
+        #install_package "mlx-vlm" "pip"
 
         # outlines - python
         install_package "outlines" "pip"
