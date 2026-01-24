@@ -953,7 +953,7 @@ install_make_only() {
         if [[ $package == "x265" ]]; then
             print_status $package "INFO" "Making"
             ./make-Makefiles.bash
-        elif [[ $package == "exiftool" ]]; then
+        elif [[ $package == "exiftool" || $package == "parseyapp" ]]; then
             print_status $package "INFO" "Making"
             perl Makefile.PL
         fi
@@ -1127,7 +1127,7 @@ install_prebuilt() {
         else
             uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
             print_status $package "INFO" "Installing"
-            local install_dirs=(bin etc include lib libexec man sbin share)
+            local install_dirs=(bin etc include lib libexec man sbin share src api pkg)
             local install_count=0
             for install_dir in $install_dirs; do
                 if [[ -d "$source_directory/$install_dir" ]]; then
@@ -1807,12 +1807,12 @@ pre_patch() {
                 popd
                 ;;
             xvidcore)
-                print_status $package "INFO" "Patching"
+                # print_status $package "INFO" "Patching"
                 sed -i '' 's/\*bsd\*|/\*bsd\*|dragonfly\*|/g' "$source_directory/configure"
-                sed -i '' 's/lea r9, \[%2\]/lea r9, [rel %2]/g' "$source_directory/../../src/nasm.inc"
-                find "$source_directory/../../src" -name '*.asm' -exec sed -i '' 's/lea \(TMP1\|_EBX\), \[\(Rounder[A-Za-z0-9_]*\)\]/lea \1, [rel \2]/g' {} +
-                find "$source_directory/../../src" -name '*.asm' -print0 | xargs -0 sed -i '' -e 's/\blea[[:space:]]\+\(TMP[01]\),[[:space:]]*\[\(Rounder[^]]*\)\]/lea \1, [rel \2]/g'
-                sed -i '' -E '/^cglobal xvid_(FIR_|Expand_mmx)/d' "$source_directory/../../src/image/x86_asm/qpel_mmx.asm"
+                # sed -i '' 's/lea r9, \[%2\]/lea r9, [rel %2]/g' "$source_directory/../../src/nasm.inc"
+                # find "$source_directory/../../src" -name '*.asm' -exec sed -i '' 's/lea \(TMP1\|_EBX\), \[\(Rounder[A-Za-z0-9_]*\)\]/lea \1, [rel \2]/g' {} +
+                # find "$source_directory/../../src" -name '*.asm' -print0 | xargs -0 sed -i '' -e 's/\blea[[:space:]]\+\(TMP[01]\),[[:space:]]*\[\(Rounder[^]]*\)\]/lea \1, [rel \2]/g'
+                # sed -i '' -E '/^cglobal xvid_(FIR_|Expand_mmx)/d' "$source_directory/../../src/image/x86_asm/qpel_mmx.asm"
 #                find "$source_directory/../../" -name '*.asm' -print0 | xargs -0 sed -i '' -e 's/^[[:space:]]*lea[[:space:]]\{1,\}r9,[[:space:]]*\[%2\]/  lea r9, [rel %2]/'
 #                sed -i '' 's/MARK_FUNCS="-DMARK_FUNCS"/MARK_FUNCS="-DDEFAULT REL -DMARK_FUNCS"/g' "$source_directory/configure"
                 ;;
@@ -1985,6 +1985,15 @@ pre_patch() {
             ruff)
                 print_status $package "INFO" "Patching"
                 print "\n[patch.crates-io]\nnotify = { path = \"$source_directory/../notify-rs/notify\" }" >> "$source_directory/Cargo.toml"
+                ;;
+            curl_cffi)
+                print_status $package "INFO" "Patching"
+                sed -i '' "s/uname.system == 'Linux'/uname.system == 'Linux' or uname.system == 'DragonFly'/g" "$source_directory/scripts/build.py"
+                ;;
+            samba)
+                print_status $package "INFO" "Patching"
+                perl -pi -e 's/#include "baselocl.h"/#include "baselocl.h"\nconst char * com_right_r(struct et_list *, long, char *, size_t);/' "$source_directory/third_party/heimdal/lib/base/error_string.c"
+                perl -pi -e 'print "const char * com_right(struct et_list *, long);\n" if $. == 1' "$source_directory/third_party/heimdal/lib/hx509/error.c"
                 ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
@@ -2682,7 +2691,7 @@ main() {
         uninstall_manifested "rust-llvm_bootstrap" "$MANIFEST_DIRECTORY/rust-llvm_bootstrap.manifest" "YES"
 
         if [[ -d "$BOOTSTRAP_PREFIX/bin" ]]; then
-            local remove_dirs=(bin etc include lib libexec man sbin share)
+            local remove_dirs=(bin etc include lib libexec man sbin share src api pkg)
             for remove_dir in $remove_dirs; do
                 if [[ -d "$BOOTSTRAP_PREFIX/$remove_dir" ]]; then
                     rm -rf "$BOOTSTRAP_PREFIX/$remove_dir"
@@ -3222,7 +3231,7 @@ main() {
 #            "NASM_FORMAT=elf64"
 #            "SPECIFIC_LDFLAGS=-shared -Wl,-soname,libxvidcore.so.4"
         )
-        install_package "xvidcore" "configure_in_source" "" "" "/build/generic" "https" "https://downloads.xvid.com/downloads/" "xvidcore-1.3.7.tar.bz2" "YES" "YES"
+        install_package "xvidcore" "configure_in_source" "" "--disable-assembly" "/build/generic" "https" "https://downloads.xvid.com/downloads/" "xvidcore-1.3.7.tar.bz2" "YES" "YES"
 
         # zimg
         install_package "zimg" "configure" "./autogen.sh" "" "" "git" "https://github.com/sekrit-twc/zimg.git" "master" "YES" "YES"
@@ -3352,7 +3361,7 @@ main() {
             "--enable-opencl"
             "--enable-pocketsphinx"
             "--enable-libopenh264"
-            "--enable-libx265"
+#            "--enable-libx265"
             "--enable-libvmaf"
             "--enable-libxavs2"
             --enable-libzmq
@@ -3557,7 +3566,7 @@ main() {
         install_package "websockets" "pip"
 
         # curl_cffi - python
-        install_package "curl_cffi" "pip"
+        install_package "curl_cffi" "pip" "local" "" "" "https" "https://files.pythonhosted.org/packages/source/c/curl_cffi/" "curl_cffi-0.14.0.tar.gz" "YES" "YES"
 
         # yt-dlp - python
         install_package "yt-dlp" "pip"
@@ -3569,7 +3578,39 @@ main() {
         install_package "htop" "configure" "" "" "" "git" "https://github.com/htop-dev/htop.git" "main" "YES" "YES"
 
         # opencv-python - python
-        install_package "opencv-python" "pip" "binary"
+#        install_package "opencv-python" "pip" "binary"
+
+        # waf - python
+        install_package "waf" "configure_in_source" "" "" "" "git" "https://gitlab.com/ita1024/waf.git" "master" "YES" "YES"
+
+        # parseyapp
+        install_package "parseyapp" "make_only" "" "" "" "git" "https://github.com/wbraswell/parse-yapp.git" "master" "YES" "YES"
+
+        # jansson
+        install_package "jansson" "configure" "" "" "" "git" "https://github.com/akheron/jansson.git" "master" "YES" "YES"
+
+        # attr
+#        install_package "attr" "configure_in_source" "" "" "" "git" "https://https.git.savannah.gnu.org/git/attr.git" "master" "YES" "YES"
+
+        # libacl
+#        install_package "libacl" "configure" "" "" "" "git" "https://git.savannah.nongnu.org/git/acl.git" "master" "YES" "YES"
+
+        # samba
+        # export TEMP_CFLAGS="$CFLAGS"
+        # export CFLAGS="-Wno-error=implicit-function-declaration $CFLAGS"
+        # export TEMP_LDFLAGS="$LDFLAGS"
+        # export LDFLAGS="$LDFLAGS -lintl -Wl,--undefined-version"
+        # local var_options=(
+        #        "--without-ldb-lmdb"
+        #        "--without-ad-dc"
+        #        "--without-acl-support"
+        #        "--without-libarchive"
+        #        "--without-pam"
+        #        "--bundled-libraries=com_err,roken,wind,hx509,asn1,heimbase,hcrypto,krb5,gssapi,heimntlm,hdb,kdc"
+        #    )
+        # install_package "samba" "configure_in_source" "" "var_options" "" "git" "https://gitlab.com/samba-team/devel/samba.git" "v4-23-stable" "YES" "YES"
+        # export CFLAGS="$TEMP_CFLAGS"
+        # export LDFLAGS="$TEMP_LDFLAGS"
 
         # openai-whisper - python (do not support 3.14)
         # install_package "openai-whisper" "pip" "binary"
@@ -3582,37 +3623,37 @@ main() {
         install_package "pgvector" "make_only" "" "" "" "git" "https://github.com/pgvector/pgvector.git" "master" "YES" "YES"
 
         # qt5 (versioned) too new cmake must fix
-        install_package "qt5" "cmake" "" "" "" "git" "git://code.qt.io/qt/qt5.git" "dev" "YES" "YES"
+        #install_package "qt5" "cmake" "" "" "" "git" "git://code.qt.io/qt/qt5.git" "dev" "YES" "YES"
 
         # exiftool (versioned)
-        install_package "exiftool" "prebuilt" "" "" "" "https" "https://downloads.sourceforge.net/exiftool/" "Image-ExifTool-13.43.tar.gz" "YES" "YES"
+        install_package "exiftool" "prebuilt" "" "" "" "https" "https://downloads.sourceforge.net/exiftool/" "Image-ExifTool-13.45.tar.gz" "YES" "YES"
 
         # dovi_tool
         install_package "dovi_tool" "cargo" "" "" "" "git" "https://github.com/quietvoid/dovi_tool.git" "main" "YES" "YES"
 
         # mcp - python
-        install_package "mcp" "pip"
+#        install_package "mcp" "pip"
 
         # fastmcp (for c2.0) - python
-        install_package "fastmcp" "pip"
+#        install_package "fastmcp" "pip"
 
         # ripgrep
         install_package "ripgrep" "cargo" "" "" "" "git" "https://github.com/BurntSushi/ripgrep.git" "master" "YES" "YES"
 
         # bat
-        install_package "bat" "cargo" "" "" "" "git" "https://github.com/sharkdp/bat.git" "master" "YES" "YES"
+#        install_package "bat" "cargo" "" "" "" "git" "https://github.com/sharkdp/bat.git" "master" "YES" "YES"
 
         # atac
         install_package "atac" "cargo" "" "" "" "git" "https://github.com/Julien-cpsn/ATAC.git" "main" "YES" "YES"
 
         # skim
-        install_package "skim" "cargo" "" "" "/skim" "git" "https://github.com/skim-rs/skim.git" "master" "YES" "YES"
+#        install_package "skim" "cargo" "" "" "/skim" "git" "https://github.com/skim-rs/skim.git" "master" "YES" "YES"
 
         # pygame - python
-        install_package "pygame" "pip"
+#        install_package "pygame" "pip"
 
         # pyarrow - python
-        install_package "pyarrow" "pip" "binary"
+#        install_package "pyarrow" "pip" "binary"
 
 	    # mlx - python
         #install_package "mlx" "pip" "binary"
@@ -3624,7 +3665,7 @@ main() {
         #install_package "mlx-vlm" "pip"
 
         # outlines - python
-        install_package "outlines" "pip"
+#        install_package "outlines" "pip"
 
         # claude-code (versioned)
         # install_package "claude-code" "prebuilt" "" "" "" "https" "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.0.60/darwin-arm64/" "claude" "YES" "NO"
@@ -3633,26 +3674,30 @@ main() {
         install_package "gemini" "npm" "@google/gemini-cli"
 
         # codex
-        install_package "codex" "cargo" "" "" "/codex-rs/tui" "git" "https://github.com/openai/codex.git" "main" "YES" "YES"
+#        install_package "codex" "cargo" "" "" "/codex-rs/tui" "git" "https://github.com/openai/codex.git" "main" "YES" "YES"
 
         # lmstudio-js
-        install_package "lmstudio-js" "npm" "@lmstudio/sdk"
+#        install_package "lmstudio-js" "npm" "@lmstudio/sdk"
 
         # lmstudio-python - python
-        install_package "lmstudio" "pip"
+#        install_package "lmstudio" "pip"
 
         # wxwidgets
-        install_package "wxwidgets" "configure" "" "--enable-compat30 --with-opengl --enable-shared" "" "git" "https://github.com/wxWidgets/wxWidgets.git" "3.2" "YES" "YES"
+        #install_package "wxwidgets" "configure" "" "--enable-compat30 --enable-shared" "" "git" "https://github.com/wxWidgets/wxWidgets.git" "3.2" "YES" "YES"
 
         # erlang
         #export CFLAGS="-O2 -DHAVE_OPENGL_GL_H -DHAVE_OPENGL_GLU_H $CFLAGS"
         #export CXXFLAGS="$CFLAGS"
-        install_package "erlang" "configure_in_source" "" "" "" "git" "https://github.com/erlang/otp.git" "master" "YES" "YES"
+#        install_package "erlang" "configure_in_source" "" "" "" "git" "https://github.com/erlang/otp.git" "master" "YES" "YES"
         #export CFLAGS=""
         #export CXXFLAGS=""
 
         # golang (versioned)
-        install_package "golang" "prebuilt" "" "" "" "https" "https://go.dev/dl/" "go1.25.6.dragonfly-amd64.tar.gz" "YES" "NO"
+        install_package "golang" "prebuilt" "" "" "go" "https" "https://go.dev/dl/" "go1.25.6.dragonfly-amd64.tar.gz" "YES" "NO"
+        export GOROOT=$INSTALL_PREFIX
+        export GOPROXY=https://proxy.golang.org,direct
+        export GOSUMDB=sum.golang.org
+        export GOTOOLCHAIN=auto
 
         # fzf - golang
         install_package "fzf" "make_only" "" "" "" "git" "https://github.com/junegunn/fzf.git" "master" "YES" "YES"
