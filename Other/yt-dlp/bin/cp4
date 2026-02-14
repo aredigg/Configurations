@@ -20,7 +20,7 @@ find . -type f -print0 | xargs -0 -I{} sh -c '
         mkdir -p -- "$(dirname -- "$TGT")" || exit 1
         cp -n -- "$INP" "$TGT"
         ;;
-      *.en.vtt|*.en-US.vtt|*.en-GB.vtt|*.en-uYU-mmqFLq8.vtt|*.en-JkeT_87f4cc.vtt)
+      *.en*.vtt|*.no*.vtt)
         TGT="$2/$BNM"
         echo "Copying    - $INP --> $TGT"
         mkdir -p -- "$(dirname -- "$TGT")" || exit 1
