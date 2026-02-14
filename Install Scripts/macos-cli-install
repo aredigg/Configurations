@@ -2031,10 +2031,13 @@ main() {
         install_package "pylint" "pip"
 
         # rust (beta)
-        install_package "rust-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-beta-aarch64-apple-darwin.tar.xz" "YES" "YES"
+        #install_package "rust-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-beta-aarch64-apple-darwin.tar.xz" "YES" "YES"
+        #install_package "rust-src-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-src-beta.tar.xz" "YES" "YES"
 
-        # rust-src (beta)
-        install_package "rust-src-beta" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-src-beta.tar.xz" "YES" "YES"
+        # rust (nightly)
+        install_package "rust-nightly" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-nightly-aarch64-apple-darwin.tar.xz" "YES" "YES"
+        install_package "rust-src-nightly" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-src-nightly.tar.xz" "YES" "YES"
+
 
         # tree-sitter-cli - rust
         install_package "tree-sitter-cli" "cargo" "" "" "/crates/cli" "git" "https://github.com/tree-sitter/tree-sitter.git" "master" "YES" "YES"
@@ -2630,6 +2633,9 @@ main() {
         # yt-dlp - python
         install_package "yt-dlp" "pip"
 
+        # bgutil-pot
+        install_package "bgutil-pot" "cargo" "" "" "" "git" " https://github.com/jim60105/bgutil-ytdlp-pot-provider-rs" "main" "YES" "YES"
+
         # tensorflow - python (do not support 3.14)
         # install_package "tf-nightly" "pip"
 
@@ -2755,6 +2761,10 @@ main() {
 
         # sqlmap
         install_package "sqlmap" "pip"
+
+        # odinlang
+        install_package "minizip" "make_only" "" "release-native" "" "git" "https://github.com/odin-lang/Odin.git" "master" "YES" "YES"
+
 
         # Avoid removing pip before last package removed
         if [[ $INSTALL_COMMAND == "remove" ]]; then
