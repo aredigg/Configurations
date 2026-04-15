@@ -1014,6 +1014,7 @@ download_https() {
         "application/x-tar"             # .tar
         "application/x-rar"             # .rar
         "application/x-7z-compressed"   # .7z
+        "application/x-lzip"            # .lz
     )
     if [[ " ${compressed_mime_types[@]} " =~ " $(file --brief --mime-type "${SOURCES_DIRECTORY}/${filename}") " ]]; then
         if [[ ! -d "${SOURCES_DIRECTORY}/${package}" ]]; then
@@ -1179,17 +1180,29 @@ install_cmake() {
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
         cd "$build_directory"
-        cmake_options="-Wno-dev -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DCMAKE_INSTALL_RPATH=@loader_path/../lib -DCMAKE_BUILD_TYPE=Release ${tool_options}"
-        if [[ $package != "ninja" ]]; then
-            cmake_options="-GNinja $cmake_options"
+        local cmake_options=(
+            "-Wno-dev"
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+            '-DCMAKE_INSTALL_RPATH=@loader_path/../lib'
+            "-DCMAKE_BUILD_TYPE=Release"
+            "-DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX"
+            "-DBUILD_SHARED_LIBS=TRUE"
+        )
+        if [[ $tool_options =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && (( ${+parameters[$tool_options]} )); then
+                cmake_options+=( "${(@P)tool_options}" )
+        elif [[ -n $tool_options ]]; then
+                cmake_options+=( "${(Q)${(z)tool_options}}" )
         fi
-        eval "cmake $cmake_options \"$source_directory\""
+        if [[ $package != "ninja" ]]; then
+            cmake_options+=("-GNinja")
+        fi
+        $INSTALL_PREFIX/bin/cmake $cmake_options "$source_directory"
         print_status $package "INFO" "Building"
-        cmake --build . --parallel=$CONCURRENT_JOBS
+        $INSTALL_PREFIX/bin/cmake --build . --parallel=$CONCURRENT_JOBS
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
         sudo_check
-        sudo cmake --install .
+        sudo $INSTALL_PREFIX/bin/cmake --install .
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
@@ -1200,12 +1213,24 @@ install_meson() {
     local tool_options="$2"
     local source_directory="$3"
     local build_directory="$4"
+    local -x LDFLAGS="$LDFLAGS -Wl,-rpath,'@loader_path/../lib'"
     if [[ $INSTALL_COMMAND == "install" ]]; then
         meson_update_wraps $package "$source_directory"
         print_status $package "INFO" "Configuring"
         mkdir -p "$build_directory"
+        local meson_options=(
+            "setup"
+            "--buildtype" "release"
+            "-Ddefault_library=shared"
+            "--prefix=$INSTALL_PREFIX"
+        )
+        if [[ $tool_options =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && (( ${+parameters[$tool_options]} )); then
+            meson_options+=( "${(@P)tool_options}" )
+        elif [[ -n $tool_options ]]; then
+            meson_options+=( "${(Q)${(z)tool_options}}" )
+        fi
         cd "$source_directory"
-        eval "meson setup --prefix=$INSTALL_PREFIX --buildtype release $tool_options" \"$build_directory\"
+        meson $meson_options "$build_directory"
         print_status $package "INFO" "Building"
         meson compile -C "$build_directory"
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
@@ -1391,7 +1416,7 @@ install_npm() {
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         print_status $package "WARN" "Uninstalling"
         sudo_check
-        sudo deno uninstall --root "$INSTALL_PREFIX" $package
+        sudo deno uninstall --global --root "$INSTALL_PREFIX" $package
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
     fi
 }
@@ -1777,6 +1802,9 @@ pre_patch() {
                 sed -i '' 's/#define JOHN_SYSTEMWIDE_EXEC.*/#define JOHN_SYSTEMWIDE_EXEC $INSTALL_PREFIX\/bin/g' "$source_directory/params.h"
                 sed -i '' 's/#define JOHN_SYSTEMWIDE_HOME.*/#define JOHN_SYSTEMWIDE_HOME $INSTALL_PREFIX\/share\/john/g' "$source_directory/params.h"
                 ;;
+            libcdio-paranoia)
+                sed -i '' 's/^[[:space:]]*extern int getopt();[[:space:]]*$/extern int getopt(int ___argc, char *const *___argv, const char *__shortopts) __THROW;/' "$source_directory/src/getopt.h"
+                ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
@@ -1817,7 +1845,15 @@ post_patch() {
             zsh-autosuggestions)
                 sudo mkdir -p "$INSTALL_PREFIX/share/zsh-autosuggestions"
                 sudo cp -f "$source_directory/zsh-autosuggestions.zsh" "$INSTALL_PREFIX/share/zsh-autosuggestions/"
-		;;
+                ;;
+            gnutls)
+                if [[ -f "$INSTALL_PREFIX/bin/certtool" ]]; then
+                    sudo mv "$INSTALL_PREFIX/bin/certtool" "$INSTALL_PREFIX/bin/gnu-certtool"
+                fi
+                if [[ -f "$INSTALL_PREFIX/share/man/man1/certtool.1" ]]; then
+                    sudo mv "$INSTALL_PREFIX/share/man/man1/certtool.1" "$INSTALL_PREFIX/share/man/man1/gnu-certtool.1"
+                fi
+                ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
@@ -1871,8 +1907,8 @@ main() {
         # automake (versioned) - autoconf
         install_package "automake" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/automake/" "automake-1.18.1.tar.xz" "YES" "YES"
 
-        # pkgconf - (autoconf, automake, libtool) or meson
-        install_package "pkgconf" "configure" "./autogen.sh" "--with-system-libdir=/usr/lib:${SDK_PATH}/usr/lib --with-system-includedir=/usr/include:${SDK_PATH}/usr/include" "" "git" "https://github.com/pkgconf/pkgconf.git" "master" "YES" "YES" "pkgconf-2.3.0"
+        # pkgconf (versioned) - (autoconf, automake, libtool) or meson
+        install_package "pkgconf" "configure" "./autogen.sh" "--with-system-libdir=/usr/lib:${SDK_PATH}/usr/lib --with-system-includedir=/usr/include:${SDK_PATH}/usr/include" "" "git" "https://github.com/pkgconf/pkgconf.git" "master" "YES" "YES" "pkgconf-2.5.1"
         install_pkg_zlib
         install_pkg_xml2
         install_pkg_lffi
@@ -1884,13 +1920,13 @@ main() {
         install_package "libunistring" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libunistring/" "libunistring-latest.tar.xz" "YES" "YES"
 
         # gettext (versioned) - libunistring, libxml2 (mac), ncurses (mac)
-        install_package "gettext" "configure" "" "--disable-csharp --with-included-gettext --with-included-glib --with-included-libcroco --with-emacs" "" "https" "https://ftp.gnu.org/gnu/gettext/" "gettext-0.26.tar.xz" "YES" "YES"
+        install_package "gettext" "configure" "" "--disable-csharp --with-included-gettext --with-included-glib --with-included-libcroco --with-emacs" "" "https" "https://ftp.gnu.org/gnu/gettext/" "gettext-1.0.tar.xz" "YES" "YES"
 
         # libidn2
         install_package "libidn2" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libidn/" "libidn2-latest.tar.gz" "YES" "YES"
 
         # texinfo (versioned)
-        install_package "texinfo" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/texinfo/" "texinfo-7.2.tar.xz" "YES" "YES"
+        install_package "texinfo" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/texinfo/" "texinfo-7.3.tar.xz" "YES" "YES"
 
         # gdbm -
         install_package "gdbm" "configure_in_source" "./autogen.sh" "--enable-libgdbm-compat --without-readline" "" "git" "https://git.savannah.gnu.org/git/gdbm.git" "master" "YES" "YES"
@@ -1902,7 +1938,7 @@ main() {
         install_package "ninja" "cmake" "" "-DBUILD_TESTING=OFF" "" "git" "https://github.com/ninja-build/ninja.git" "release" "YES" "YES"
 
         # openmp (versioned) – manually creates a pkgconfig pc file to support the clang compiler
-        install_package "openmp" "prebuilt" "" "" "/local" "https" "https://mac.r-project.org/openmp/" "openmp-19.1.0-darwin20-Release.tar.gz" "YES" "YES"
+        install_package "openmp" "prebuilt" "" "" "/local" "https" "https://mac.r-project.org/openmp/" "openmp-19.1.5-darwin20-Release.tar.gz" "YES" "YES"
         install_pkg_libomp
 
         # libtommath - cmake, libtool
@@ -1932,8 +1968,11 @@ main() {
         # acquire certs
         install_certs
 
+        # multitail
+        install_package "multitail" "cmake" "" "" "" "git" "https://github.com/folkertvanheusden/multitail.git" "master" "YES" "YES"
+
         # openssl (versioned, v4 not compatible with rust crate) - brotli, certs
-        install_package "openssl" "configure" "" "--openssldir=$INSTALL_PREFIX/etc/ssl darwin64-arm64-cc enable-ec_nistp_64_gcc_128" "" "git" "https://github.com/openssl/openssl.git" "master" "YES" "YES" "openssl-3.5"
+        install_package "openssl" "configure" "" "--openssldir=$INSTALL_PREFIX/etc/ssl darwin64-arm64-cc enable-ec_nistp_64_gcc_128" "" "git" "https://github.com/openssl/openssl.git" "master" "YES" "YES" "openssl-3.6"
 
         # nghttp2 - cmake
         install_package "nghttp2" "cmake" "" "" "" "git" "https://github.com/nghttp2/nghttp2.git" "master" "YES" "YES"
@@ -1950,19 +1989,17 @@ main() {
         # curl - pkgconf, brotli, nghttp2, nghttp3, psl (deferred), libssh2, openssl, rtmpdump, zstd, krb5 (mac), openldap (mac), zlib (mac)
         # We cannot use Secure Transport with QUIC and HTTP/3, and it is also deprecated
         # --with-openssl --with-openssl-quic --without-libpsl --with-gssapi --with-apple-idn
-        install_package "curl" \
-                        "cmake" "" \
-                        " \
-                            -DCURL_USE_OPENSSL=ON \
-                            -DCURL_USE_LIBPSL=OFF \
-                            -DCURL_USE_GSSAPI=ON \
-                            -DCURL_LTO=ON \
-                            -DUSE_OPENSSL_QUIC=ON \
-                            -DUSE_APPLE_IDN=ON \
-                            -DCURL_CA_BUNDLE=$INSTALL_ROOT_CERTS \
-                            -DCMAKE_OSX_SYSROOT=$SDK_PATH \
-                        " \
-                        "" "git" "https://github.com/curl/curl.git" "master" "YES" "YES" # "curl-8_11_1"
+        local var_options=(
+            -DCURL_USE_OPENSSL=ON
+            -DCURL_USE_LIBPSL=OFF
+            -DCURL_USE_GSSAPI=ON
+            -DCURL_LTO=ON
+            -DUSE_OPENSSL_QUIC=ON
+            -DUSE_APPLE_IDN=ON
+            -DCURL_CA_BUNDLE=$INSTALL_ROOT_CERTS
+            -DCMAKE_OSX_SYSROOT=$SDK_PATH
+        )
+        install_package "curl" "cmake" "" "var_options" "" "git" "https://github.com/curl/curl.git" "master" "YES" "YES" # "curl-8_11_1"
 
         # gnu-nano
         install_package "nano" "configure" "./autogen.sh" "--enable-color -enable-extra --enable-multibuffer --enable-nanorc --enable-utf8" "" "git" "git://git.savannah.gnu.org/nano.git" "master" "YES" "YES"
@@ -1973,10 +2010,10 @@ main() {
         export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # tcl (versioned) - openssl, libtommath
-        install_package "tcl" "configure" "" "" "/macosx" "https" "https://downloads.sourceforge.net/project/tcl/Tcl/9.0.2/" "tcl9.0.2-src.tar.gz" "YES" "YES"
+        install_package "tcl" "configure" "" "" "/macosx" "https" "http://prdownloads.sourceforge.net/tcl/" "tcl9.0.3-src.tar.gz" "YES" "YES"
 
         # tk (versioned) - tcl
-        install_package "tk" "configure" "" "--with-tcl=${BUILDS_DIRECTORY}/tcl --enable-aqua=yes" "/macosx" "https" "http://prdownloads.sourceforge.net/tcl/" "tk9.0.2-src.tar.gz" "YES" "YES"
+        install_package "tk" "configure" "" "--with-tcl=${BUILDS_DIRECTORY}/tcl --enable-aqua=yes" "/macosx" "https" "http://prdownloads.sourceforge.net/tcl/" "tk9.0.3-src.tar.gz" "YES" "YES"
 
         # mpdecimal (versioned) -
         install_package "mpdecimal" "configure" "" "" "" "https" "https://www.bytereef.org/software/mpdecimal/releases/" "mpdecimal-4.0.1.tar.gz" "YES" "YES"
@@ -2038,6 +2075,9 @@ main() {
         install_package "rust-nightly" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-nightly-aarch64-apple-darwin.tar.xz" "YES" "YES"
         install_package "rust-src-nightly" "prebuilt" "./install.sh" "--prefix=$INSTALL_PREFIX" "" "https" "https://static.rust-lang.org/dist/" "rust-src-nightly.tar.xz" "YES" "YES"
 
+        # uv - python, rust
+        install_package "uv" "cargo" "/crates/uv" "" "" "git" "https://github.com/astral-sh/uv.git" "main" "YES" "YES"
+        # install_package "uv" "pip"
 
         # tree-sitter-cli - rust
         install_package "tree-sitter-cli" "cargo" "" "" "/crates/cli" "git" "https://github.com/tree-sitter/tree-sitter.git" "master" "YES" "YES"
@@ -2096,10 +2136,27 @@ main() {
         # freetype - cmake, pkgconf, libpng, bzip2 (mac), zlib (mac)
         install_package "freetype" "cmake" "" "" "" "git" "https://github.com/freetype/freetype.git" "master" "YES" "YES"
 
+        ASSETS_V2_FONTS=(/System/Library/AssetsV2/com_apple_MobileAsset_Font*(N))
+        ASSETS_FONTS=(/System/Library/Assets/com_apple_MobileAsset_Font*(N))
+        FONTS=(
+          /System/Library/Fonts
+          /Library/Fonts
+          "$HOME/Library/Fonts"
+          ${ASSETS_V2_FONTS[@]}
+          ${ASSETS_FONTS[@]}
+        )
+        FONTS_DIRS="${(j:,:)FONTS}"
+        local var_options=(
+            -Ddefault-fonts-dirs="${FONTS_DIRS}"
+            -Dadditional-fonts-dirs=no
+            -Dcache-build=disabled
+            -Dtools=enabled
+        )
         # fontconfig - autoconf, gettext, libtool, pkgconf, freetype, gperf (mac), python (mac), bzip2 (mac), expat (mac)
-        export LDFLAGS="-Wl,-rpath,$INSTALL_PREFIX/lib"
-        install_package "fontconfig" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/fontconfig/fontconfig.git" "main" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        install_package "fontconfig" "meson" "" "var_options" "" "git" "https://github.com/fontconfig/fontconfig.git" "main" "YES" "YES"
+#        export LDFLAGS="-Wl,-rpath,$INSTALL_PREFIX/lib"
+#        install_package "fontconfig" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/fontconfig/fontconfig.git" "main" "YES" "YES"
+#        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # pixman (versioned) - meson
         install_package "pixman" "meson" "" "" "" "https" "https://cairographics.org/releases/" "pixman-0.46.4.tar.gz" "YES" "YES"
@@ -2123,9 +2180,11 @@ main() {
         install_package "libwebp" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/webmproject/libwebp.git" "main" "YES" "YES"
 
         # libtiff - cmake
-        export LDFLAGS="-lsharpyuv"
-        install_package "libtiff" "configure_in_source" "./autogen.sh" "" "" "git" "https://gitlab.com/libtiff/libtiff.git" "master" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-lsharpyuv"
+        install_package "libtiff" "cmake" "" "" "" "git" "https://gitlab.com/libtiff/libtiff.git" "master" "YES" "YES"
+
+        #install_package "libtiff" "configure_in_source" "./autogen.sh" "" "" "git" "https://gitlab.com/libtiff/libtiff.git" "master" "YES" "YES"
+        #export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # libyuv - cmake
         install_package "libyuv" "cmake" "" "" "" "git" "https://chromium.googlesource.com/libyuv/libyuv" "main" "YES" "YES"
@@ -2144,7 +2203,15 @@ main() {
         add_rpath "$INSTALL_PREFIX/bin/cargo-cbuild" "@loader_path/../lib"
 
         # glib - meson
-        install_package "glib" "meson" "" "-Dselinux=disabled -Ddtrace=disabled -Dsystemtap=disabled -Dbsymbolic_functions=false -Dintrospection=enabled -Dtests=false" "" "git" "https://github.com/GNOME/glib.git" "main" "YES" "YES"
+        local var_options=(
+            "-Dselinux=disabled"
+            "-Ddtrace=disabled"
+            "-Dsystemtap=disabled"
+            "-Dbsymbolic_functions=false"
+            "-Dintrospection=enabled"
+            "-Dtests=false"
+        )
+        install_package "glib" "meson" "" "var_options" "" "git" "https://github.com/GNOME/glib.git" "main" "YES" "YES"
 
         # markdown - python
         install_package "markdown" "pip"
@@ -2174,12 +2241,26 @@ main() {
         install_package "graphite2" "cmake" "" "" "" "git" "https://github.com/silnrsi/graphite.git" "master" "YES" "YES"
 
         # harfbuzz - meson
-        install_package "harfbuzz" "meson" "" "-Dtests=disabled -Dcoretext=enabled -Dgraphite2=enabled -Ddocs=disabled" "" "git" "https://github.com/harfbuzz/harfbuzz.git" "main" "YES" "YES"
+        local var_options=(
+            "-Dtests=disabled"
+            "-Dcoretext=enabled"
+            "-Dgraphite2=enabled"
+            "-Ddocs=disabled"
+        )
+        install_package "harfbuzz" "meson" "" "var_options" "" "git" "https://github.com/harfbuzz/harfbuzz.git" "main" "YES" "YES"
 
         # pango - meson
-        export LDFLAGS=""
-        install_package "pango" "meson" "" "-Dintrospection=enabled -Dfontconfig=enabled -Dcairo=enabled -Dfreetype=enabled -Dbuild-testsuite=false" "" "git" "https://gitlab.gnome.org/GNOME/pango.git" "main" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        local var_options=(
+            "-Dintrospection=enabled"
+            "-Dfontconfig=enabled"
+            "-Dcairo=enabled"
+            "-Dfreetype=enabled"
+            "-Dbuild-testsuite=false"
+        )
+
+#        export LDFLAGS=""
+        install_package "pango" "meson" "" "var_options" "" "git" "https://gitlab.gnome.org/GNOME/pango.git" "main" "YES" "YES"
+#        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # dbus (git check pid fix)
         install_package "dbus" "cmake" "" "" "" "https" "https://dbus.freedesktop.org/releases/dbus/" "dbus-1.16.2.tar.xz" "YES" "YES"
@@ -2224,7 +2305,7 @@ main() {
         install_package "sympy" "pip"
 
         # nettle (versioned)
-        install_package "nettle" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/nettle/" "nettle-3.10.2.tar.gz" "YES" "YES"
+        install_package "nettle" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/nettle/" "nettle-4.0.tar.gz" "YES" "YES"
 
         # unbound
         install_package "unbound" "configure" "" "--with-libexpat=$SDK_PATH/usr --with-libevent" "" "git" "https://github.com/NLnetLabs/unbound.git" "master" "YES" "YES"
@@ -2238,17 +2319,48 @@ main() {
         # c-ares
         install_package "c-ares" "cmake" "" "" "" "git" "https://github.com/c-ares/c-ares.git" "main" "YES" "YES"
 
+        # wget
+        install_package "wget" "configure" "" "--with-ssl=openssl --without-libpsl --without-included-regex" "" "https" "https://ftp.gnu.org/gnu/wget/" "wget-latest.tar.lz" "YES" "YES"
+
+        # wget2
+        install_package "wget2" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/wget/" "wget2-latest.tar.lz" "YES" "YES"
+
+        # gtk-doc
+        local var_options=(
+            "-Dtests=false"
+            "-Dyelp_manual=false"
+        )
+        install_package "gtk-doc" "meson" "" "var_options" "" "git" "https://gitlab.gnome.org/GNOME/gtk-doc.git" "master" "YES" "YES"
+
+        # libev -
+        install_package "libev" "configure" "" "" "" "https" "https://dist.schmorp.de/libev/" "libev-4.33.tar.gz" "YES" "YES"
+
+        # help2man (versioned)
+        install_package "help2man" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/help2man/" "help2man-1.49.3.tar.xz" "YES" "YES"
+
+        # libtasn1
+        install_package "libtasn1" "configure_in_source" "" "--disable-dependency-tracking" "" "git" "https://github.com/gnutls/libtasn1.git" "master" "YES" "YES"
+
         # gnutls (versioned)
-        install_package "gnutls" "configure" "" "--with-included-libtasn1 --with-included-unistring" "" "https" "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/" "gnutls-3.8.11.tar.xz" "YES" "YES"
+        export LDFLAGS="-Wl,-rpath,$INSTALL_PREFIX/lib"
+        install_package "gnutls" "configure_in_source" "" "--disable-doc --with-p11-kit --disable-heartbeat-support --with-included-libtasn1 --with-included-unistring" "" "git" "https://gitlab.com/gnutls/gnutls.git" "master" "YES" "YES"
+        # install_package "gnutls" "configure" "" "--with-included-libtasn1 --with-included-unistring" "" "https" "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/" "gnutls-3.8.12.tar.xz" "YES" "YES"
+        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # libass
         install_package "libass" "meson" "" "" "" "git" "https://github.com/libass/libass.git" "master" "YES" "YES"
 
         # libbluray (versioned)
-        install_package "libbluray" "meson" "" "-Dbdj_jar=disabled -Dfontconfig=enabled -Dfreetype=enabled -Dlibxml2=enabled" "" "https" "https://download.videolan.org/videolan/libbluray/1.4.0/" "libbluray-1.4.0.tar.xz" "YES" "YES"
+        local var_options=(
+            "-Dbdj_jar=disabled"
+            "-Dfontconfig=enabled"
+            "-Dfreetype=enabled"
+            "-Dlibxml2=enabled"
+        )
+        install_package "libbluray" "meson" "" "var_options" "" "https" "https://download.videolan.org/videolan/libbluray/1.4.1/" "libbluray-1.4.1.tar.xz" "YES" "YES"
 
         # mpg123 (versioned)
-        install_package "mpg123" "configure" "" "" "" "https" "https://sourceforge.net/projects/mpg123/files/mpg123/1.33.3/" "mpg123-1.33.3.tar.bz2" "YES" "YES"
+        install_package "mpg123" "configure" "" "" "" "https" "https://sourceforge.net/projects/mpg123/files/mpg123/1.33.4/" "mpg123-1.33.4.tar.bz2" "YES" "YES"
 
         # lame (versioned)
         install_package "lame" "configure" "" "--disable-debug --enable-nasm" "" "https" "https://sourceforge.net/projects/lame/files/lame/3.100/" "lame-3.100.tar.gz" "YES" "YES"
@@ -2257,9 +2369,9 @@ main() {
         install_package "libsndfile" "cmake" "" "" "" "git" "https://github.com/libsndfile/libsndfile.git" "master" "YES" "YES"
 
         # libbs2b (versioned)
-        export LDFLAGS="-lmpg123 -lmp3lame"
+#        export LDFLAGS="-lmpg123 -lmp3lame"
         install_package "libbs2b" "configure" "" "" "" "https" "https://downloads.sourceforge.net/project/bs2b/libbs2b/3.1.0/" "libbs2b-3.1.0.tar.gz" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+#        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # dav1d
         install_package "dav1d" "meson" "" "" "" "git" "https://github.com/videolan/dav1d.git" "master" "YES" "YES"
@@ -2304,7 +2416,7 @@ main() {
         install_package "libopus" "cmake" "" "" "" "git" "https://github.com/xiph/opus.git" "main" "YES" "YES"
 
         # libtheora
-        install_package "libtheora" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/xiph/theora.git" "master" "YES" "YES"
+        install_package "libtheora" "configure_in_source" "./autogen.sh" "--disable-oggtest --disable-vorbistest --disable-examples" "" "git" "https://github.com/xiph/theora.git" "master" "YES" "YES"
 
         # portaudio
         install_package "portaudio" "cmake" "" "" "" "git" "https://github.com/PortAudio/portaudio.git" "master" "YES" "YES"
@@ -2318,9 +2430,9 @@ main() {
         install_package "libqrencode" "cmake" "" "" "" "git" "https://github.com/fukuchi/libqrencode.git" "master" "YES" "YES"
 
         # rubberband
-        export LDFLAGS="-lmpg123 -lmp3lame"
+#        export LDFLAGS="-lmpg123 -lmp3lame"
         install_package "rubberband" "meson" "" "" "" "git" "https://github.com/breakfastquay/rubberband.git" "default" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+#        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # shine
         install_package "shine" "configure_in_source" "" "" "" "git" "https://github.com/toots/shine.git" "main" "YES" "YES"
@@ -2336,13 +2448,13 @@ main() {
         # speex
         install_package "speex" "meson" "" "" "" "git" "https://gitlab.xiph.org/xiph/speex.git" "master" "YES" "YES"
 
-        # svt-av1 (versioned, v2)
-        install_package "svt-av1" "cmake" "" "" "" "git" "https://gitlab.com/AOMediaCodec/SVT-AV1.git" "master" "YES" "YES" "v2.3.0"
+        # svt-av1 (versioned)
+        install_package "svt-av1" "cmake" "" "" "" "git" "https://gitlab.com/AOMediaCodec/SVT-AV1.git" "master" "YES" "YES" "v4.1.0"
 
         # twolame (versioned)
-        export LDFLAGS="-lmpg123 -lmp3lame"
+#        export LDFLAGS="-lmpg123 -lmp3lame"
         install_package "twolame" "configure" "" "" "" "https" "https://downloads.sourceforge.net/twolame/" "twolame-0.4.0.tar.gz" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+#        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # vmaf
         install_package "vmaf" "meson" "" "" "/libvmaf" "git" "https://github.com/Netflix/vmaf.git" "master" "YES" "YES"
@@ -2360,7 +2472,15 @@ main() {
         install_package "pyyaml" "pip"
 
         # mesa
-        install_package "mesa" "meson" "" "-Dllvm=disabled -Dshared-llvm=disabled -Dcpp_rtti=false -Dplatforms=macos -Dgallium-drivers=softpipe -Dglx=disabled" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
+        local var_options=(
+            "-Dllvm=disabled"
+            "-Dshared-llvm=disabled"
+            "-Dcpp_rtti=false"
+            "-Dplatforms=macos"
+            "-Dgallium-drivers=softpipe"
+            "-Dglx=disabled"
+        )
+        install_package "mesa" "meson" "" "var_options" "" "git" "https://gitlab.freedesktop.org/mesa/mesa.git" "main" "YES" "YES"
 
         # depot_tools
         install_package "depot_tools" "custom" "" "" "" "git" "https://chromium.googlesource.com/chromium/tools/depot_tools.git" "main" "YES" "YES"
@@ -2374,9 +2494,13 @@ main() {
         install_pkg_egl
 
         # libepoxy
-        # install_package "libepoxy" "meson" "" "-Dx11=false -Dtests=false" "" "git" "https://github.com/akihikodaki/libepoxy.git" "macos" "YES" "YES"
-        # install_package "libepoxy" "meson" "" "-Dx11=false -Dtests=false" "" "git" "https://github.com/akihikodaki/libepoxy.git" "macos" "YES" "YES"
-        install_package "libepoxy" "meson" "" "-Degl=yes -Dx11=false" "" "git" "https://github.com/mohd-akram/libepoxy.git" "macos-egl" "YES" "YES"
+        # https://github.com/anholt/libepoxy.git
+        local var_options=(
+            "-Degl=yes"
+            "-Dx11=false"
+        )
+        install_package "libepoxy" "meson" "" "var_options" "" "git" "https://github.com/akihikodaki/libepoxy.git" "macos" "YES" "YES"
+         #install_package "libepoxy" "meson" "" "var_options" "" "git" "https://github.com/mohd-akram/libepoxy.git" "macos-egl" "YES" "YES"
         # install_package "libepoxy" "meson" "" "-Dx11=false -Dtests=false" "" "https" "https://download.gnome.org/sources/libepoxy/1.5/" "libepoxy-1.5.10.tar.xz" "YES" "YES"
 
         # virglrenderer
@@ -2387,7 +2511,11 @@ main() {
 
         # libssh (fails with main repository)
         # install_package "libssh" "cmake" "" "-DBUILD_STATIC_LIB=ON -DWITH_SYMBOL_VERSIONING=OFF" "" "git" "git://git.libssh.org/projects/libssh.git" "master" "YES" "YES"
-        install_package "libssh" "cmake" "" "-DBUILD_STATIC_LIB=ON -DWITH_SYMBOL_VERSIONING=OFF" "" "git" "https://github.com/timway/libssh-mirror.git" "master" "YES" "YES"
+        local var_options=(
+            "-DBUILD_STATIC_LIB=ON"
+            "-DWITH_SYMBOL_VERSIONING=OFF"
+        )
+        install_package "libssh" "cmake" "" "var_options" "" "git" "https://github.com/timway/libssh-mirror.git" "master" "YES" "YES"
 
         # capstone
         install_package "capstone" "cmake" "" "" "" "git" "https://github.com/capstone-engine/capstone.git" "next" "YES" "YES"
@@ -2396,13 +2524,24 @@ main() {
         install_package "distlib" "pip"
 
         # gtk
-        install_package "gtk" "meson" "" "-Dx11-backend=false -Dmacos-backend=true -Dvulkan=disabled -Dmedia-gstreamer=disabled -Dbuild-examples=false -Dbuild-tests=false -Dintrospection=enabled" "" "git" "https://gitlab.gnome.org/GNOME/gtk.git" "main" "YES" "YES"
+        local var_options=(
+            "-Dx11-backend=false"
+            "-Dmacos-backend=true"
+            "-Dvulkan=disabled"
+            "-Dmedia-gstreamer=disabled"
+            "-Dbuild-examples=false"
+            "-Dbuild-tests=false"
+            "-Dintrospection=enabled"
+        )
+        install_package "gtk" "meson" "" "var_options" "" "git" "https://gitlab.gnome.org/GNOME/gtk.git" "main" "YES" "YES"
 
         # gtk3+
-        install_package "gtk3" "meson" "" "-Dx11_backend=false -Dquartz_backend=true -Dintrospection=true" "" "https" "https://download.gnome.org/sources/gtk+/3.24/" "gtk+-3.24.43.tar.xz" "YES" "YES"
-
-        # gtk-doc
-        install_package "gtk-doc" "meson" "" "-Dtests=false -Dyelp_manual=false" "" "git" "https://gitlab.gnome.org/GNOME/gtk-doc.git" "master" "YES" "YES"
+        local var_options=(
+            "-Dx11_backend=false"
+            "-Dquartz_backend=true"
+            "-Dintrospection=true"
+        )
+        install_package "gtk3" "meson" "" "" "" "https" "https://download.gnome.org/sources/gtk+/3.24/" "gtk+-3.24.43.tar.xz" "YES" "YES"
 
         # gtk-mac-integration
         install_package "gtk-mac-integration" "configure_in_source" "./autogen.sh" "--without-gtk2 --with-gtk3 --enable-introspection=yes" "" "git" "https://gitlab.gnome.org/GNOME/gtk-mac-integration.git" "master" "YES" "YES"
@@ -2418,6 +2557,9 @@ main() {
         export CFLAGS="-Wno-implicit-function-declaration -Wno-pointer-integer-compare"
         install_package "shared-mime-info" "meson" "" "" "" "https" "https://gitlab.freedesktop.org/xdg/shared-mime-info/-/archive/2.4/" "shared-mime-info-2.4.tar.bz2" "YES" "YES"
         export CFLAGS=""
+
+        # json-glib
+        install_package "json-glib" "meson" "" "" "" "git" "https://gitlab.gnome.org/GNOME/json-glib.git" "main" "YES" "YES"
 
         # gtkwave
         install_package "gtkwave" "meson" "" "" "" "git" "https://github.com/gtkwave/gtkwave.git" "master" "YES" "YES"
@@ -2443,18 +2585,27 @@ main() {
         install_package "zvbi" "configure" "./autogen.sh" "" "" "git" "https://github.com/zapping-vbi/zvbi.git" "main" "YES" "YES"
 
         # openal
-        export LDFLAGS="-lmpg123 -lmp3lame"
-        install_package "openal" "cmake" "" "" "" "git" "https://github.com/kcat/openal-soft.git" "master" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+#        export LDFLAGS="-lmpg123 -lmp3lame"
+        local var_options=(
+            "-Wno-error=function-effects"
+            "-DALSOFT_UTILS=OFF"
+            "-DALSOFT_EXAMPLES=OFF"
+            "-DALSOFT_TESTS=OFF"
+            "-DHAVE_GCC_PROTECTED_VISIBILITY=OFF"
+        )
+        install_package "openal" "cmake" "" "var_options" "" "git" "https://github.com/kcat/openal-soft.git" "master" "YES" "YES" "1.24.0"
+
+        #install_package "openal" "cmake" "" "" "" "git" "https://github.com/kcat/openal-soft.git" "master" "YES" "YES"
+#        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # pocketsphinx
         install_package "pocketsphinx" "cmake" "" "-DBUILD_SHARED_LIBS=ON" "" "git" "https://github.com/cmusphinx/pocketsphinx.git" "main" "YES" "YES"
 
         # libgpg-error (versioned)
-        install_package "libgpg-error" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgpg-error/" "libgpg-error-1.56.tar.bz2" "YES" "YES"
+        install_package "libgpg-error" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgpg-error/" "libgpg-error-1.59.tar.bz2" "YES" "YES"
 
         # libgcrypt (versioned)
-        install_package "libgcrypt" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgcrypt/" "libgcrypt-1.11.2.tar.bz2" "YES" "YES"
+        install_package "libgcrypt" "configure" "" "" "" "https" "https://gnupg.org/ftp/gcrypt/libgcrypt/" "libgcrypt-1.12.1.tar.bz2" "YES" "YES"
 
         # libcdio (versioned)
         install_package "libcdio" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/libcdio/" "libcdio-2.1.0.tar.bz2" "YES" "YES"
@@ -2463,7 +2614,7 @@ main() {
         install_package "libcdio-paranoia" "configure_in_source" "./autogen.sh" "" "" "git" "https://github.com/libcdio/libcdio-paranoia.git" "master" "YES" "YES"
 
         # chromaprint
-        install_package "chromaprint" "cmake" "" "" "" "git" "https://github.com/acoustid/chromaprint.git" "master" "YES" "YES"
+        install_package "chromaprint" "cmake" "" "-DBUILD_TESTS=OFF" "" "git" "https://github.com/acoustid/chromaprint.git" "master" "YES" "YES"
 
         # vid.stab
         install_package "vid.stab" "cmake" "" "" "" "git" "https://github.com/georgmartius/vid.stab.git" "master" "YES" "YES"
@@ -2477,9 +2628,9 @@ main() {
         # ffmpeg
         # --enable-libx265 removed use videotoolbox
         # --extra-cflags=-I$INSTALL_PREFIX/include --extra-ldflags=-L$INSTALL_PREFIX/lib removed
-        export LDFLAGS="-logg -lvorbis -lsharpyuv -lwebp -Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-logg -lvorbis -lsharpyuv -lwebp -Wl,-rpath,@loader_path/../lib"
         install_package "ffmpeg" "configure" "" "--enable-gpl --enable-version3 --enable-nonfree --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libcdio --enable-libdav1d --enable-libfdk-aac --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libgme --enable-libharfbuzz --enable-libjxl --enable-libmp3lame --enable-libopencore-amrwb --enable-opengl --enable-libopus  --enable-libopenjpeg --enable-libopenmpt --enable-libsvtav1 --enable-libtheora --enable-libxvid  --enable-libsnappy --enable-libmysofa --enable-libopencore-amrnb --enable-libmodplug --enable-libqrencode --enable-libshine --enable-librubberband --enable-libsoxr --enable-libsnappy --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvo-amrwbenc --enable-libvpx --enable-libwebp --enable-libx264 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzvbi --enable-gcrypt --enable-gmp --enable-gnutls --enable-openal --enable-opencl --enable-pocketsphinx  --enable-libopenh264 --enable-libvmaf --enable-libxavs2 --enable-libzmq" "" "git" "https://git.ffmpeg.org/ffmpeg.git" "master" "YES" "YES"
-        export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
+        #export LDFLAGS="-Wl,-rpath,@loader_path/../lib"
 
         # qemu
         install_package "qemu" "configure" "" \
@@ -2543,13 +2694,13 @@ main() {
         install_package "scikit-learn" "pip" "binary"
 
         # torch - python
-        install_package "torch" "pip" "version" "2.9.0" "https://download.pytorch.org/whl/test/"
+        install_package "torch" "pip" "version" "2.11.0" "https://download.pytorch.org/whl/test/"
 
         # torchvision - python
-        install_package "torchvision" "pip" "version" "0.24.0" "https://download.pytorch.org/whl/test/"
+        install_package "torchvision" "pip" "version" "0.26.0" "https://download.pytorch.org/whl/test/"
 
         # torchaudio - python
-        install_package "torchaudio" "pip" "version" "2.9.0" "https://download.pytorch.org/whl/test/"
+        install_package "torchaudio" "pip" "version" "2.11.0" "https://download.pytorch.org/whl/test/"
 
         # libdaq
         install_package "libdaq" "configure_in_source" "" "" "" "git" "https://github.com/snort3/libdaq.git" "master" "YES" "YES"
@@ -2572,9 +2723,6 @@ main() {
         # libdnet - cmake
         install_package "libdnet" "cmake" "" "" "" "git" "https://github.com/ofalk/libdnet.git" "master" "YES" "YES"
 
-        # help2man (versioned)
-        install_package "help2man" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/help2man/" "help2man-1.49.3.tar.xz" "YES" "YES"
-
         # flex (versioned)
         install_package "flex" "configure" "" "" "" "https" "https://github.com/westes/flex/releases/download/v2.6.4/" "flex-2.6.4.tar.gz" "YES" "YES"
 
@@ -2589,13 +2737,13 @@ main() {
         install_package "snort_extra" "cmake" "" "" "" "git" "https://github.com/snort3/snort3_extra.git" "master" "YES" "YES"
 
         # zig (versioned)
-        install_package "zig" "prebuilt" "" "" "" "https" "https://ziglang.org/builds/" "zig-aarch64-macos-0.16.0-dev.1484+d0ba6642b.tar.xz" "YES" "YES"
+        install_package "zig" "prebuilt" "" "" "" "https" "https://ziglang.org/builds/" "zig-aarch64-macos-0.16.0-dev.3041+3dc5f1398.tar.xz" "YES" "YES"
 
         # zls (versioned to zig) - zig
         install_package "zls" "zig" "" "" "" "git" "https://github.com/zigtools/zls.git" "master" "YES" "YES"
 
         # deno (versioned)
-        install_package "deno" "prebuilt" "" "" "" "https" "https://github.com/denoland/deno/releases/download/v2.6.1/" "deno-aarch64-apple-darwin.zip" "YES" "NO"
+        install_package "deno" "prebuilt" "" "" "" "https" "https://github.com/denoland/deno/releases/download/v2.7.9/" "deno-aarch64-apple-darwin.zip" "YES" "NO"
 
         # ruff - python
         install_package "ruff" "pip"
@@ -2634,7 +2782,7 @@ main() {
         install_package "yt-dlp" "pip"
 
         # bgutil-pot
-        install_package "bgutil-pot" "cargo" "" "" "" "git" " https://github.com/jim60105/bgutil-ytdlp-pot-provider-rs" "main" "YES" "YES"
+        install_package "bgutil-pot" "cargo" "" "" "" "git" "https://github.com/jim60105/bgutil-ytdlp-pot-provider-rs.git" "master" "YES" "YES"
 
         # tensorflow - python (do not support 3.14)
         # install_package "tf-nightly" "pip"
@@ -2643,7 +2791,7 @@ main() {
         install_package "opencv-python" "pip" "binary"
 
         # openai-whisper - python (do not support 3.14)
-        # install_package "openai-whisper" "pip" "binary"
+        install_package "openai-whisper" "pip" "binary"
 
         # postgresql (versioned)
         # install_package "postgresql" "meson" "" "" "" "git" "https://git.postgresql.org/git/postgresql.git" "REL_18_STABLE" "YES" "YES"
@@ -2658,7 +2806,7 @@ main() {
         install_package "qt5" "cmake" "" "" "" "git" "git://code.qt.io/qt/qt5.git" "dev" "YES" "YES"
 
         # exiftool (versioned)
-        install_package "exiftool" "prebuilt" "" "" "" "https" "https://downloads.sourceforge.net/exiftool/" "Image-ExifTool-13.43.tar.gz" "YES" "YES"
+        install_package "exiftool" "prebuilt" "" "" "" "https" "https://downloads.sourceforge.net/exiftool/" "Image-ExifTool-13.53.tar.gz" "YES" "YES"
 
         # dovi_tool
         install_package "mdcat" "cargo" "" "" "" "git" "https://github.com/quietvoid/dovi_tool.git" "main" "YES" "YES"
@@ -2679,7 +2827,7 @@ main() {
         install_package "atac" "cargo" "" "" "" "git" "https://github.com/Julien-cpsn/ATAC.git" "main" "YES" "YES"
 
         # skim
-        install_package "skim" "cargo" "" "" "/skim" "git" "https://github.com/skim-rs/skim.git" "master" "YES" "YES"
+        install_package "skim" "cargo" "" "" "" "git" "https://github.com/skim-rs/skim.git" "master" "YES" "YES"
 
         # pygame - python
         install_package "pygame" "pip"
@@ -2700,13 +2848,13 @@ main() {
         install_package "outlines" "pip"
 
         # claude-code (versioned)
-        install_package "claude-code" "prebuilt" "" "" "" "https" "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.0.60/darwin-arm64/" "claude" "YES" "NO"
+        install_package "claude-code" "prebuilt" "" "" "" "https" "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.81/darwin-arm64/" "claude" "YES" "NO"
 
         # gemini
         install_package "gemini" "npm" "@google/gemini-cli"
 
         # codex
-        install_package "codex" "cargo" "" "" "/codex-rs/tui" "git" "https://github.com/openai/codex.git" "main" "YES" "YES"
+#        install_package "codex" "cargo" "" "" "/codex-rs/tui" "git" "https://github.com/openai/codex.git" "main" "YES" "YES"
 
         # lmstudio-js
         install_package "lmstudio-js" "npm" "@lmstudio/sdk"
@@ -2725,10 +2873,34 @@ main() {
         export CXXFLAGS=""
 
         # golang (versioned)
-        install_package "golang" "prebuilt" "" "" "" "https" "https://go.dev/dl/" "go1.25.5.darwin-arm64.tar.gz" "YES" "NO"
+        install_package "golang" "prebuilt" "" "" "" "https" "https://go.dev/dl/" "go1.26.1.darwin-arm64.tar.gz" "YES" "NO"
 
         # d2 (versioned) - building from source later
         install_package "d2" "prebuilt" "" "" "" "https" "https://github.com/terrastruct/d2/releases/download/v0.7.1/" "d2-v0.7.1-macos-arm64.tar.gz" "YES" "NO"
+
+        # libfyaml
+        install_package "libfyaml" "cmake" "" "" "" "git" "https://github.com/pantoniou/libfyaml.git" "master" "YES" "YES"
+
+        # lxml - python
+        install_package "lxml" "pip"
+
+        # itstool - adding lxml to main
+        install_package "itstool" "configure" "" "" "" "git" "https://github.com/nwellnhof/itstool.git" "lxml-migration" "YES" "YES"
+
+        # libxmlb
+        install_package "libxmlb" "meson" "" "-Dgtkdoc=false" "" "git" "https://github.com/hughsie/libxmlb.git" "main" "YES" "YES"
+
+        # appstream
+        local var_options=(
+            "-Dsystemd=false"
+            "-Dstemming=false"
+            "-Dbash-completion=false"
+            "-Ddocs=false"
+            "-Dapidocs=false"
+            "-Dinstall-docs=false"
+            "-Dman=false"
+        )
+        install_package "appstream" "meson" "" "var_options" "" "git" "https://github.com/ximion/appstream.git" "main" "YES" "YES"
 
         # dia
         install_package "dia" "meson" "" "" "" "git" "https://gitlab.gnome.org/GNOME/dia.git" "master" "YES" "YES"
@@ -2763,7 +2935,8 @@ main() {
         install_package "sqlmap" "pip"
 
         # odinlang
-        install_package "minizip" "make_only" "" "release-native" "" "git" "https://github.com/odin-lang/Odin.git" "master" "YES" "YES"
+        #install_package "odinlang" "make_only" "" "release-native" "" "git" "https://github.com/odin-lang/Odin.git" "master" "YES" "YES"
+        install_package "odinlang" "prebuilt" "" "" "" "https" "https://github.com/odin-lang/Odin/releases/download/dev-2026-03/" "odin-macos-arm64-dev-2026-03.tar.gz" "YES" "YES"
 
 
         # Avoid removing pip before last package removed
