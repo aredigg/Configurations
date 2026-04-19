@@ -10,10 +10,21 @@ vim.opt.expandtab = true
 vim.opt.fillchars = { eob = "│" }
 vim.opt.scrolloff = 2
 vim.opt.shiftwidth = 4
+vim.opt.wrap = false
+vim.opt.guicursor = 'a:ver25-blinkwait700-blinkoff400-blinkon250'
+-- i dont understand teh vimpaste
+vim.keymap.set('n', 'p', 'P', { noremap = true })
+vim.keymap.set('n', 'P', 'p', { noremap = true })
 -- mouse
 vim.opt.mousescroll = "ver:1,hor:1"
 -- enable lsp
+vim.lsp.enable('basedpyright')
 vim.lsp.enable('sourcekit')
+vim.lsp.enable('jdtls')
+vim.lsp.enable('postgres_lsp')
+vim.lsp.enable('rust-analyzer')
+vim.lsp.enable('zls')
+vim.lsp.enable('vhdl_ls')
 vim.lsp.codelens.enable(true)
 vim.lsp.inlay_hint.enable(true)
 
@@ -53,10 +64,9 @@ vim.api.nvim_create_autocmd('BufWritePre', {
 -- packages
 vim.pack.add({
     'https://github.com/nvim-tree/nvim-web-devicons',
-    'https://github.com/nvim-lualine/lualine.nvim'
+    'https://github.com/nvim-lualine/lualine.nvim',
+    'https://github.com/nvim-tree/nvim-tree.lua',
 })
-
-
 
 -- lualine
 local function progress_block()
@@ -180,3 +190,10 @@ require("lualine").setup {
     	lualine_z = { progress_block }
     }
 }
+
+-- nvim-tree
+vim.g.loaded_netrw = 1
+vim.g.loaded_netrwPlugin = 1
+require("nvim-tree").setup()
+vim.keymap.set('n', '<leader>e', ':NvimTreeToggle<CR>', { desc = 'File explorer', silent = true })
+
