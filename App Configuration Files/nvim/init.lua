@@ -171,7 +171,7 @@ require("lualine").setup {
     	lualine_c = { {
 		'filename',
 	        symbols = {
-		    modified = '',
+		    modified = '•',
 		    readonly = '󱀰',
 		    unnamed = '--',
 		    newfile = '󰻭', 
