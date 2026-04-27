@@ -136,7 +136,19 @@
           "trailing_diamond": "\ue0b4",
           "foreground": "p:black",
           "background": "p:frappe_green",
-          "template": "{{ if or .Working.Changed .Staging.Changed }}{{ if or .Working.Changed }} \u2022 {{ end }}{{ if or .Staging.Changed }} \uf071 {{ end }}{{ else }} \uf00c {{ end }}{{ if not (and (eq .Ahead 0) (eq .Behind 0)) }} \u2191{{ .Ahead }} \u2193{{ .Behind }} {{ end }}",
+          "template": "{{ if or .Working.Changed .Staging.Changed }}{{ if .Working.Changed }} \u2022 {{ end }}{{ if .Staging.Changed }} \uf071 {{ end }}{{ else }} \uf00c {{ end }}{{ if not (and (eq .Ahead 0) (eq .Behind 0)) }} \u2191{{ .Ahead }} \u2193{{ .Behind }} {{ end }}",
+          "options": {
+            "branch_icon": "\uE0A0 ",
+            "fetch_status": true,
+            "fetch_push_status": true
+          }
+        },
+        {
+          "type": "git",
+          "style": "plain",
+          "foreground": "p:latte_red",
+          "background": "transparent",
+          "template": "{{ if .Detached }} {{ .ShortHash }} {{ end }}{{ if .Merge }} \ue727 {{ end }}{{ if .CherryPick }} \ue29b {{ end }}{{ if .Revert }} \uf071 {{ end }}",
           "options": {
             "branch_icon": "\uE0A0 ",
             "fetch_status": true
@@ -182,7 +194,7 @@
           "trailing_diamond": "\ue0b4",
           "foreground": "p:latte_red",
           "background": "p:frappe_crust",
-          "template": "\ue755 {{ .Major }}.{{ .Minor }}"
+          "template": "\ue699 {{ .Major }}.{{ .Minor }}"
         },
         {
           "type": "python",
