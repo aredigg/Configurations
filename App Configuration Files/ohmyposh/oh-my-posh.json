@@ -136,7 +136,7 @@
           "trailing_diamond": "\ue0b4",
           "foreground": "p:black",
           "background": "p:frappe_green",
-          "template": "{{ if and (gt .Ahead 0) (gt .Behind 0) }} \u21f5\u21e1{{ .Ahead }}\u21e3{{ .Behind }}{{ else if gt .Ahead 0 }} \u21e1{{ .Ahead }}{{ else if gt .Behind 0 }} \u21e3{{ .Behind }}{{ else if .Working.Changed }} \uf071{{ else }} \uf00c{{ end }} ",
+          "template": "{{ if or .Working.Changed .Staging.Changed }}{{ if or .Working.Changed }} \u2022 {{ end }}{{ if or .Staging.Changed }} \uf071 {{ end }}{{ else }} \uf00c {{ end }}{{ if not (and (eq .Ahead 0) (eq .Behind 0)) }} \u2191{{ .Ahead }} \u2193{{ .Behind }} {{ end }}",
           "options": {
             "branch_icon": "\uE0A0 ",
             "fetch_status": true
