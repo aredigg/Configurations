@@ -1285,6 +1285,16 @@ install_prebuilt() {
                 sudo cp -Pf "$source_directory/zig" "$INSTALL_PREFIX/bin/"
                 install_count=1
             fi
+            if [[ $package == "postgres-language-server" ]]; then
+                sudo cp -Pf $source_directory* "$INSTALL_PREFIX/bin/postgres-language-server"
+                sudo chmod +x "$INSTALL_PREFIX/bin/postgres-language-server"
+                install_count=1
+            fi
+            if [[ $package == "ohmyposh" ]]; then
+                sudo cp -Pf "${SOURCES_DIRECTORY}/posh-darwin-arm64" "$INSTALL_PREFIX/bin/oh-my-posh"
+                sudo chmod +x "$INSTALL_PREFIX/bin/oh-my-posh"
+                install_count=1
+            fi
             if (( install_count == 0 )); then
                 count_files=( "$source_directory"/*(.N) )
                 if (( ${#count_files} == 1 )); then
@@ -1371,7 +1381,7 @@ install_cargo() {
         uninstall_manifested $package "$MANIFEST_DIRECTORY/${package}.manifest"
         print_status $package "INFO" "Installing"
         sudo_check
-        sudo cargo install --force --path "$source_directory$source_path" --root $INSTALL_PREFIX
+        sudo cargo install --force --locked --path "$source_directory$source_path" --root $INSTALL_PREFIX
         if [[ $package == "helix" ]]; then
             rm -rf "$source_directory/runtime/grammars/sources/"
             sudo_check
@@ -1412,7 +1422,7 @@ install_npm() {
     if [[ $INSTALL_COMMAND == "install" ]]; then
         sudo_check
         print_status $package "INFO" "Installing"
-        sudo deno install --global --allow-all --name $package --root "$INSTALL_PREFIX" npm:$2
+        sudo deno install -f --global --allow-all --name $package --root "$INSTALL_PREFIX" npm:$2
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         print_status $package "WARN" "Uninstalling"
         sudo_check
@@ -1854,6 +1864,9 @@ post_patch() {
                     sudo mv "$INSTALL_PREFIX/share/man/man1/certtool.1" "$INSTALL_PREFIX/share/man/man1/gnu-certtool.1"
                 fi
                 ;;
+            protobuf-c)
+                sudo ln -sf $INSTALL_PREFIX/bin/protoc-gen-c $INSTALL_PREFIX/bin/protoc-c
+                ;;
         esac
     elif [[ $INSTALL_COMMAND == "remove" ]]; then
         case "$1" in
@@ -1861,6 +1874,9 @@ post_patch() {
                 print_status $package "INFO" "Remove symlinks"
                 sudo rm -f $INSTALL_PREFIX/bin/pkg-config
                 sudo rm -f $INSTALL_PREFIX/share/man/man1/pkg-config.1
+                ;;
+            protobuf-c)
+                sudo rm -f $INSTALL_PREFIX/bin/protoc-c
                 ;;
         esac
     fi
@@ -1890,6 +1906,10 @@ main() {
             xcodebuild -downloadComponent MetalToolchain
             sudo xcodebuild -downloadComponent MetalToolchain
         fi
+
+        # clean cargo folder
+        sudo_check
+        sudo rm -rf "$HOME/.cargo"
 
         # m4 (builtin old) -
         install_package "m4" "configure" "" "" "" "https" "https://ftp.gnu.org/gnu/m4/" "m4-latest.tar.xz" "YES" "YES"
@@ -1975,7 +1995,7 @@ main() {
         install_package "openssl" "configure" "" "--openssldir=$INSTALL_PREFIX/etc/ssl darwin64-arm64-cc enable-ec_nistp_64_gcc_128" "" "git" "https://github.com/openssl/openssl.git" "master" "YES" "YES" "openssl-3.6"
 
         # nghttp2 - cmake
-        install_package "nghttp2" "cmake" "" "" "" "git" "https://github.com/nghttp2/nghttp2.git" "master" "YES" "YES"
+        install_package "nghttp2" "cmake" "" "-DENABLE_EXAMPLES=OFF" "" "git" "https://github.com/nghttp2/nghttp2.git" "master" "YES" "YES"
 
         # nghttp3 - cmake
         install_package "nghttp3" "cmake" "" "" "" "git" "https://github.com/ngtcp2/nghttp3.git" "main" "YES" "YES"
@@ -2190,7 +2210,15 @@ main() {
         install_package "libyuv" "cmake" "" "" "" "git" "https://chromium.googlesource.com/libyuv/libyuv" "main" "YES" "YES"
 
         # aom - cmake, aom
-        install_package "aom" "cmake" "" "-DBUILD_SHARED_LIBS=TRUE -DENABLE_TESTDATA=off -DENABLE_TESTS=off" "" "git" "https://aomedia.googlesource.com/aom" "main" "YES" "YES"
+        local var_options=(
+            "-DBUILD_SHARED_LIBS=ON"
+            "-DENABLE_TESTDATA=OFF" 
+            "-DENABLE_TESTS=OFF" 
+            "-DENABLE_DOCS=OFF" 
+            "-DENABLE_TOOLS=OFF" 
+            "-DENABLE_EXAMPLES=OFF"
+        )
+        install_package "aom" "cmake" "" "var_options" "" "git" "https://aomedia.googlesource.com/aom" "main" "YES" "YES"
 
         # libavif - cmake, aom
         install_package "libavif" "cmake" "" "-DAVIF_CODEC_AOM=SYSTEM -DAVIF_BUILD_APPS=ON" "" "git" "https://github.com/AOMediaCodec/libavif.git" "main" "YES" "YES"
@@ -2737,7 +2765,7 @@ main() {
         install_package "snort_extra" "cmake" "" "" "" "git" "https://github.com/snort3/snort3_extra.git" "master" "YES" "YES"
 
         # zig (versioned)
-        install_package "zig" "prebuilt" "" "" "" "https" "https://ziglang.org/builds/" "zig-aarch64-macos-0.16.0-dev.3041+3dc5f1398.tar.xz" "YES" "YES"
+        install_package "zig" "prebuilt" "" "" "" "https" "https://ziglang.org/builds/" "zig-aarch64-macos-0.17.0-dev.131+73c51c142.tar.xz" "YES" "YES"
 
         # zls (versioned to zig) - zig
         install_package "zls" "zig" "" "" "" "git" "https://github.com/zigtools/zls.git" "master" "YES" "YES"
@@ -2799,8 +2827,60 @@ main() {
         install_package "postgresql" "meson" "" "" "" "git" "https://github.com/postgres/postgres.git" "REL_18_STABLE" "YES" "YES"
         export DYLD_LIBRARY_PATH=""
 
+        # geos
+        install_package "geos" "cmake" "" "" "" "git" "https://github.com/libgeos/geos.git" "main" "YES" "YES"
+
+        # proj
+        local var_options=(
+            "-DBUILD_TESTING=OFF"
+        )
+        install_package "proj" "cmake" "" "var_options" "" "git" "https://github.com/OSGeo/PROJ.git" "master" "YES" "YES"
+
+        # abseil
+        local var_options=(
+            "-DBUILD_TESTING=OFF"
+            "-DCMAKE_CXX_STANDARD=17"
+            "-DABSL_ENABLE_INSTALL=ON"
+            "-DABSL_PROPAGATE_CXX_STD=ON"
+        )
+        install_package "abseil" "cmake" "" "var_options" "" "git" "https://github.com/abseil/abseil-cpp.git" "master" "YES" "YES"
+
+        # protobuf
+        local var_options=(
+            "-Dprotobuf_BUILD_TESTS=OFF"
+            "-Dprotobuf_BUILD_LIBPROTOC=ON"
+            "-Dprotobuf_INSTALL_EXAMPLES=OFF"
+        )
+        install_package "protobuf" "cmake" "" "var_options" "" "git" "https://github.com/protocolbuffers/protobuf.git" "main" "YES" "YES"
+
+        # protobuf-c
+        local var_options=(
+        )
+        install_package "protobuf-c" "cmake" "" "var_options" "/build-cmake" "git" "https://github.com/strophy/protobuf-c.git" "fix-protobuf-34-compile" "YES" "YES"
+        # install_package "protobuf-c" "configure" "" "var_options" "" "git" "https://github.com/protobuf-c/protobuf-c.git" "master" "YES" "YES"
+
+        # json-c
+        local var_options=(
+            "-DBUILD_APPS=OFF"
+        )
+        install_package "json-c" "cmake" "" "var_options" "" "git" "https://github.com/json-c/json-c.git" "master" "YES" "YES"
+
+        # gdal (fix openmp)
+        local var_options=(
+            "-DCMAKE_CXX_STANDARD=17"
+            "-DGDAL_USE_TIFF_INTERNAL=ON"
+            "-DGDAL_USE_OPENMP=OFF"
+            "-DBUILD_TESTING=OFF"
+        )
+        install_package "gdal" "cmake" "" "var_options" "" "git" "https://github.com/OSGeo/gdal.git" "master" "YES" "YES"
+
+       # postgis (versioned)
+        install_package "postgis" "configure" "" "" "" "git" "https://github.com/postgis/postgis.git" "stable-3.6" "YES" "YES"
+
         # postgres-language-server
-        install_package "postgres-language-server" "cargo" "" "" "crates/pgls_cli" "git" "https://github.com/supabase-community/postgres-language-server.git" "main" "YES" "YES"
+        # https://github.com/supabase-community/postgres-language-server/releases/download/0.24.0/postgrestools_aarch64-apple-darwin
+        # install_package "postgres-language-server" "cargo" "" "" "/crates/pgls_cli" "git" "https://github.com/supabase-community/postgres-language-server.git" "main" "YES" "YES"
+        install_package "postgres-language-server" "prebuilt" "" "" "" "https" "https://github.com/supabase-community/postgres-language-server/releases/download/0.24.0/" "postgres-language-server_aarch64-apple-darwin" "YES" "YES"
 
         # pgvector
         install_package "pgvector" "make_only" "" "" "" "git" "https://github.com/pgvector/pgvector.git" "master" "YES" "YES"
@@ -2809,7 +2889,7 @@ main() {
         install_package "qt5" "cmake" "" "" "" "git" "git://code.qt.io/qt/qt5.git" "dev" "YES" "YES"
 
         # exiftool (versioned)
-        install_package "exiftool" "prebuilt" "" "" "" "https" "https://downloads.sourceforge.net/exiftool/" "Image-ExifTool-13.53.tar.gz" "YES" "YES"
+        install_package "exiftool" "prebuilt" "" "" "" "https" "https://downloads.sourceforge.net/exiftool/" "Image-ExifTool-13.57.tar.gz" "YES" "YES"
 
         # dovi_tool
         install_package "mdcat" "cargo" "" "" "" "git" "https://github.com/quietvoid/dovi_tool.git" "main" "YES" "YES"
@@ -2877,6 +2957,11 @@ main() {
 
         # golang (versioned)
         install_package "golang" "prebuilt" "" "" "" "https" "https://go.dev/dl/" "go1.26.1.darwin-arm64.tar.gz" "YES" "NO"
+
+        # ohmyposh
+        # https://github.com/JanDeDobbeleer/oh-my-posh/releases/download/v29.10.0/posh-darwin-arm64
+        # install_package "ohmyposh" "go" "" "" "" "git" "https://github.com/JanDeDobbeleer/oh-my-posh.git" "main" "YES" "YES"
+        install_package "ohmyposh" "prebuilt" "" "" "" "https" "https://github.com/JanDeDobbeleer/oh-my-posh/releases/download/v29.10.0/" "posh-darwin-arm64" "YES" "YES"
 
         # d2 (versioned) - building from source later
         install_package "d2" "prebuilt" "" "" "" "https" "https://github.com/terrastruct/d2/releases/download/v0.7.1/" "d2-v0.7.1-macos-arm64.tar.gz" "YES" "NO"

@@ -1,6 +1,7 @@
-# Setup, we use custom chracters not in default Terminal in starship
+# Setup, we use custom chracters not in default Terminal in starship/oh-my-posh
 if [[ $TERM_PROGRAM == "ghostty" ]]; then
-    eval "$(starship init zsh)"
+    eval "$(oh-my-posh init zsh --config $HOME/.config/oh-my-posh.json)"
+    # eval "$(starship init zsh)"
 fi
 
 # zsh
@@ -42,3 +43,9 @@ color() {
     fi
     printf "#${hex:u} = ▕\033[38;2;${red};${grn};${blu}m████\033[0m▏\n"
 }
+
+# whatsmyip
+myip() {
+    print $(curl -s ifconfig.me)
+}
+
