@@ -13,10 +13,26 @@ vim.opt.shiftwidth = 4
 vim.opt.wrap = false
 vim.opt.guicursor = 'a:ver25-blinkwait700-blinkoff400-blinkon250'
 -- i dont understand teh vimpaste
-vim.keymap.set('n', 'p', 'P', { noremap = true })
-vim.keymap.set('n', 'P', 'p', { noremap = true })
+vim.keymap.set('n', 'p', 'P')
+vim.keymap.set('n', 'P', 'p')
 -- mouse
 vim.opt.mousescroll = "ver:1,hor:1"
+-- terminal helper
+local function switch_terminal()
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_get_name(buf):sub(1,7) == "term://" then
+            vim.api.nvim_win_set_buf(0, buf)
+            vim.cmd("startinsert")
+            return
+        end
+    end
+    vim.cmd("terminal")
+    vim.cmd("startinsert")
+end
+vim.keymap.set('n', '<leader>t', switch_terminal)
+vim.keymap.set('t', '<C-Esc>', '<C-\\><C-n>')
+vim.keymap.set('n', '<Tab>', '<CMD>bn<CR>')
+vim.keymap.set('n', '<S-Tab>', '<CMD>bp<CR>')
 -- enable lsp
 vim.lsp.enable('basedpyright')
 vim.lsp.enable('sourcekit')
@@ -171,11 +187,11 @@ require("lualine").setup {
     	lualine_c = { {
 		'filename',
 	        symbols = {
-		    modified = '•',
+		    modified = '',
 		    readonly = '󱀰',
 		    unnamed = '--',
 		    newfile = '󰻭', 
-	        }
+	        },
 	    }
     	},
     	lualine_x = {'encoding', {
@@ -190,7 +206,7 @@ require("lualine").setup {
     	lualine_z = { progress_block }
     }
 }
-
+ 
 -- nvim-tree
 vim.g.loaded_netrw = 1
 vim.g.loaded_netrwPlugin = 1
