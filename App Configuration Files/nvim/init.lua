@@ -11,7 +11,11 @@ vim.opt.fillchars = { eob = "│" }
 vim.opt.scrolloff = 2
 vim.opt.shiftwidth = 4
 vim.opt.wrap = false
-vim.opt.guicursor = 'a:ver25-blinkwait700-blinkoff400-blinkon250'
+vim.opt.clipboard = "unnamedplus"
+vim.opt.guicursor = 'i-v-r-c:ver25-blinkwait700-blinkoff400-blinkon250'
+vim.opt.virtualedit = 'onemore'
+vim.keymap.set("i", "<Esc>", "<Esc><Right>")
+vim.keymap.set("i", "<C-[>", "<Esc><Right>")
 -- i dont understand teh vimpaste
 vim.keymap.set('n', 'p', 'P')
 vim.keymap.set('n', 'P', 'p')

@@ -31,6 +31,13 @@ compinit
 bindkey '^T' transpose-words
 bindkey '^[t' transpose-chars
 
+# Prettify man pages
+export LESS_TERMCAP_mb=$'\e[3m' # $(tput blink; tput setaf 4)
+export LESS_TERMCAP_md=$'\e[1m\e[92m' # $(tput bold; tput setaf 10)
+export LESS_TERMCAP_me=$'\e[0m' # $(tput sgr0)
+export LESS_TERMCAP_us=$'\e[32m' # $(tput setaf 2)
+export LESS_TERMCAP_ue=$'\e[0m' # $(tput sgr0)
+
 # Python
 if [[ -d /Library/Frameworks/Python.framework/Versions/Current/bin ]]; then
     export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:$PATH"
