@@ -1,21 +1,10 @@
 # Setup, we use custom characters not in default Terminal in oh-my-posh
 if [[ $TERM_PROGRAM == "ghostty" ]]; then
-    eval "$(oh-my-posh init zsh --config $HOME/.config/oh-my-posh.json)"
+    if command -v oh-my-posh >/dev/null 2>&1; then
+        eval "$(oh-my-posh init zsh --config $HOME/.config/oh-my-posh.json)"
+    fi
 fi
 
-# zsh
-source /usr/local/share/zsh-autosuggestions/zsh-autosuggestions.zsh
-source /usr/local/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-
-if [[ $TERM_PROGRAM == "ghostty" ]]; then
-    # ZSH HIGHLIGHT COLORS
-    ZSH_HIGHLIGHT_HIGHLIGHTERS=(main)
-    ZSH_HIGHLIGHT_STYLES[command]='fg=#40a02b'
-    ZSH_HIGHLIGHT_STYLES[function]='fg=#40a02b'
-    ZSH_HIGHLIGHT_STYLES[builtin]='fg=#40a02b,bold'
-    ZSH_HIGHLIGHT_STYLES[unknown]='fg=#e5c890'
-    ZSH_HIGHLIGHT_STYLES[unknown-token]='fg=#d20f39,bold'
-fi
 export HELIX_RUNTIME=/usr/local/libexec/helix/runtime
 
 # History settings
@@ -62,5 +51,3 @@ color() {
 myip() {
     print $(curl -s ifconfig.me)
 }
-
-
