@@ -30,3 +30,33 @@ Finder
 defaults write com.apple.finder DisableAllAnimations -bool true
 defaults write com.apple.finder FXDefaultSearchScope -string "SCcf"
 ```
+
+SSH key creation
+
+```zsh
+ssh-keygen -o -a 1024 -t ed25519 -C ${HOST/.local}      # Generate a keypair
+ssh-copy-id -i $HOME/.ssh/id_ed25519.pub user@remote-host   # Copy public key to remote host
+eval $(ssh-agent)                                       # Set up the SSH agent
+ssh-add --apple-use-keychain $HOME/.ssh/id_ed25519      # Add the key and store passphrase into keychain
+```
+
+If copying the public key to clipboard is required
+
+```zsh
+pbcopy < $HOME/.ssh/id_ed25519.pub
+```
+
+Automatic use of the keys for remote host (eg. GitHub)
+
+```zsh
+install -m 600 /dev/null $HOME/.ssh/config
+nano $HOME/.ssh/config
+```
+
+and edit matching the relevant host
+```
+Host github.com
+  AddKeysToAgent yes
+  UseKeychain yes
+  IdentityFile ~/.ssh/id_ed25519
+```

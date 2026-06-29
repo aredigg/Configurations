@@ -32,6 +32,9 @@ if [[ -d /Library/Frameworks/Python.framework/Versions/Current/bin ]]; then
     export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:$PATH"
 fi
 
+# Load key passphrase from keychain
+ssh-add --apple-load-keychain
+
 # Color full-color lookup of hex values
 color() {
     if [[ $# -eq 1 ]]; then
