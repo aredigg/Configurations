@@ -34,10 +34,10 @@ defaults write com.apple.finder FXDefaultSearchScope -string "SCcf"
 SSH key creation
 
 ```zsh
-ssh-keygen -o -a 1024 -t ed25519 -C ${HOST/.local}      # Generate a keypair
-ssh-copy-id -i $HOME/.ssh/id_ed25519.pub user@remote-host   # Copy public key to remote host
-eval $(ssh-agent)                                       # Set up the SSH agent
-ssh-add --apple-use-keychain $HOME/.ssh/id_ed25519      # Add the key and store passphrase into keychain
+ssh-keygen -o -a 1024 -t ed25519 -C ${HOST/.local}              # Generate a keypair
+ssh-copy-id -i $HOME/.ssh/id_ed25519.pub user@remote-host       # Copy public key to remote host
+eval $(ssh-agent)                                               # Set up the SSH agent
+ssh-add --apple-use-keychain $HOME/.ssh/id_ed25519              # Add the key and store passphrase into keychain
 ```
 
 If copying the public key to clipboard is required
@@ -59,4 +59,21 @@ Host github.com
   AddKeysToAgent yes
   UseKeychain yes
   IdentityFile ~/.ssh/id_ed25519
+```
+
+Global git set up
+
+```zsh
+mkdir -p $HOME/.config/git
+touch .config/git/config
+touch .config/git/gitignore
+git config --global user.name $(id -F)
+git config --global user.email $(osascript -e 'tell application "Contacts" to get value of email 1 of my card')
+git config --global core.editor zed
+git config --global init.defaultBranch development
+git config --global gpg.format ssh
+git config --global user.signingKey $HOME/.ssh/id_ed25519.pub
+git config --global commit.gpgsign true
+git config --global tag.gpgsign true
+git config --global core.excludesFile $HOME/.config/git/gitignore
 ```
