@@ -1,3 +1,6 @@
+# Load key passphrase from keychain (it usually takes a few seconds)
+ssh-add --apple-load-keychain >/dev/null 2>&1 &!
+
 # Setup, we use custom characters not in default Terminal in oh-my-posh
 if [[ $TERM_PROGRAM == "ghostty" ]]; then
     if command -v oh-my-posh >/dev/null 2>&1; then
@@ -31,9 +34,6 @@ export LESS_TERMCAP_ue=$'\e[0m' # $(tput sgr0)
 if [[ -d /Library/Frameworks/Python.framework/Versions/Current/bin ]]; then
     export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:$PATH"
 fi
-
-# Load key passphrase from keychain
-ssh-add --apple-load-keychain
 
 # Color full-color lookup of hex values
 color() {
