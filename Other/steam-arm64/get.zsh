@@ -1,9 +1,9 @@
+# based on Andreas Korb SteamShutdown, MIT license
 acf_to_json() {
     local -a raw_lines=("$@")
     local -a lines
-    local l
+    local l i
 
-    # Wrap multi-root VDF content in a synthetic root object
     lines+=('"__root__"')
     lines+=('{')
     for l in "${raw_lines[@]}"; do
@@ -13,8 +13,7 @@ acf_to_json() {
 
     local n=${#lines[@]}
     local output=""
-    local next
-    local key value
+    local next key value
 
     local re_single=$'^(\t+".+")\t\t(".*")$'
     local re_start_of_object=$'^\t+".+"$'
@@ -53,15 +52,19 @@ acf_to_json() {
 
     print -r -- "$output"
 }
+
 acf_data=$(curl -sf "https://client-update.steamstatic.com/steam_client_osx")
 acf_lines=("${(f)acf_data}")
 json_output=$(acf_to_json "${acf_lines[@]}")
 zip_file=$(jq .osx.appdmg_osx.file <<<$json_output)
+zip_file=${zip_file//\"/}
 temp_dir=$(mktemp -d)
-curl -L "https://client-update.steamstatic.com/$zip_file" -o "$temp_dir/appdmg_osx.zip"
+curl -L# "https://client-update.steamstatic.com/$zip_file" -o "$temp_dir/appdmg_osx.zip"
 unzip -q "$temp_dir/appdmg_osx.zip" -d "$temp_dir"
+tar xf "$temp_dir/SteamMacBootstrapper.tar.gz" -C "$temp_dir"
 cp -R "$temp_dir/Steam.app" "/Applications/"
 xattr -dr com.apple.quarantine "/Applications/Steam.app"
 package_dir="$HOME/Library/Application Support/Steam/package"
 mkdir -p "$package_dir"
 echo "publicbeta" >"$package_dir/beta"
+rm -rf "$temp_dir"
