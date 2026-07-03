@@ -1,0 +1,42 @@
+[language-server.basedpyright]
+command = "basedpyright-langserver"
+args = ["--stdio"]
+
+[language-server.basedpyright.config]
+basedpyright.analysis.diagnosticMode = "openFilesOnly"
+
+[[language]]
+name = "python"
+language-servers = [ "basedpyright" ]
+formatter = { command = "ruff", args = ["format", "--line-length", "120", "-"] }
+auto-format = true
+
+[[language]]
+name = "swift"
+formatter = { command = "swift", args = ["format"] }
+auto-format = true
+
+[[language]]
+name = "bash"
+indent = { tab-width = 4, unit = "    " }
+formatter = { command = 'shfmt', args = ["-i", "4"] }
+auto-format = true
+
+[[language]]
+name = "zsh"
+scope = "source.shell"
+injection-regex = "zsh"
+file-types = [
+  "zsh",
+  { glob = ".zshrc" },
+  { glob = ".zprofile" },
+  { glob = ".zshenv" },
+  { glob = ".zlogin" },
+  { glob = ".zlogout" },
+]
+shebangs = ["zsh"]
+grammar = "bash"
+indent = { tab-width = 4, unit = "    " }
+language-servers = ["bash-language-server"]
+formatter = { command = "shfmt", args = ["-ln", "zsh", "-i", "4"] }
+auto-format = true

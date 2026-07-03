@@ -1,0 +1,72 @@
+theme = "github_dark"
+
+[editor]
+default-yank-register = "+"
+scroll-lines = 1
+cursorline = true
+rulers = [120]
+color-modes = true
+text-width = 120
+middle-click-paste = false
+trim-final-newlines = true
+trim-trailing-whitespace = true
+end-of-line-diagnostics = "hint"
+
+[editor.statusline]
+left = [
+    "mode",
+    "separator",
+    "spacer",
+    "file-base-name",
+    "read-only-indicator",
+    "file-modification-indicator",
+    "separator",
+    "spacer",
+    "version-control",
+    "spacer",
+    "spacer",
+    "separator",
+    "spinner",
+    "diagnostics"
+]
+right = [
+    "position",
+    "position-percentage",
+    "spacer",
+    "spacer",
+    "separator",
+    "file-type",
+    "spacer",
+    "separator",
+    "selections",
+    "register",
+    "file-line-ending",
+    "file-encoding"
+]
+separator = "▎"
+mode.normal = "Normal"
+mode.insert = "Insert"
+mode.select = "Select"
+
+[editor.cursor-shape]
+normal = "block"
+insert = "bar"
+select = "bar"
+
+[editor.auto-save]
+focus-lost = true
+after-delay.enable = true
+after-delay.timeout = 60000
+
+[editor.whitespace.render]
+tab = "all"
+
+[editor.whitespace.characters]
+tab = "⇥"
+tabpad = "·"
+
+[editor.gutters.line-numbers]
+min-width = 5
+
+[editor.inline-diagnostics]
+cursor-line = "warning"

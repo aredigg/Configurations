@@ -1,0 +1,35 @@
+# neowave _ a theme
+# © 2026 Are Digranes
+
+"ui.background" = { bg = "deep_black" }
+"ui.selection" = { bg = "bold_navy" }
+
+
+[palette]
+"catskill_white" = "#eef7f7"
+"pastel_lemon" = "#f1efab"
+"spring_yellow" = "#f3e65f"
+"golden_crust" = "#ebac5b"
+"burnt_sienna" = "#e37256"
+"salmon" = "#de5560"
+"cerise" = "#d9386a"
+"byzantine" ="#b42bac"
+"electric_purple" = "#8f1ded"
+"glossy_purple" = "#781ad5"
+"brilliant_purple" = "#6017bc"
+"illusion_blue" = "#4914a3"
+"deep_indigo" = "#31108a"
+"midnight_blue" = "#100144"
+"midnight_black" = "#100112"
+"deep_black" = "#000000"
+"orchid" = "#dc66e9"
+"neon_chartreuse" = "#d9ff2f"
+"harmony_green" = "#76f0a6"
+"turquoise" = "#74d9d4"
+"cornflower_blue" = "#4c8ad4"
+"fashion_blue" = "#243bd3"
+"trendy_darkblue" = "#0c1eb2"
+"bold_navy" = "#0e107b"
+"dim_gray" = "#696969"
+"solid_gray" = "#969696"
+"pine_green" = "#206d4b"

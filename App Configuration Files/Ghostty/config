@@ -14,6 +14,7 @@ background-opacity = 0.9
 background-blur-radius = 10
 window-padding-x = 12
 window-padding-y = 8
+term = ghostty
 shell-integration-features = sudo
 palette = 0=#232634
 palette = 1=#d20f39

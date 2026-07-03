@@ -1,0 +1,113 @@
+# neowave _ a theme
+# © 2026 Are Digranes
+
+"attribute" = "catskill_white"
+"keyword" = "cerise"
+"keyword.directive" = "cerise"
+"namespace" = "golden_crust"
+"punctuation" = "catskill_white"
+"punctuation.delimiter" = "catskill_white"
+"operator" = "turquoise"
+"special" = "turquoise"
+"variable.other.member" = "turquoise"
+"variable" = "catskill_white"
+"variable.parameter" = "golden_crust"
+"variable.builtin" = "cerise"
+"type" = "golden_crust"
+"type.builtin" = "cornflower_blue"
+"constructor" = "orchid"
+"function" = "orchid"
+"function.macro" = "orchid"
+"tag" = "neon_chartreuse"
+"comment" = "solid_gray"
+"constant" = "cornflower_blue"
+"constant.builtin" = "cornflower_blue"
+"string" = "turquoise"
+"constant.numeric" = "cornflower_blue"
+"constant.character.escape" = "cornflower_blue"
+"label" = "cerise"
+
+"markup.heading" = "cornflower_blue"
+"markup.bold" = { modifiers = ["bold"] }
+"markup.italic" = { modifiers = ["italic"] }
+"markup.strikethrough" = { modifiers = ["crossed_out"] }
+"markup.link.url" = { modifiers = ["underlined"] }
+"markup.link.text" = { fg = "turquoise", modifiers = ["underlined"] }
+"markup.raw" = "cornflower_blue"
+
+"diff.plus" = "harmony_green"
+"diff.minus" = "byzantine"
+"diff.delta" = "spring_yellow"
+
+"ui.background" = { bg = "deep_black" }
+"ui.background.separator" = { fg = "dim_gray" }
+"ui.linenr" = { fg = "dim_gray" }
+"ui.linenr.selected" = { fg = "catskill_white" }
+"ui.statusline" = { fg = "solid_gray", bg = "deep_indigo" }
+"ui.statusline.active" = { fg = "catskill_white", bg = "midnight_blue", underline = { color = "salmon", style = "line" } }
+"ui.statusline.normal" = { fg = "catskill_white", bg = "bold_navy" }
+"ui.statusline.insert" = { fg = "catskill_white", bg = "electric_purple" }
+"ui.statusline.select" = { fg = "catskill_white", bg = "orchid" }
+"ui.popup" = { bg = "midnight_blue" }
+"ui.popup.info" = { fg = "catskill_white", bg = "midnight_blue" }
+"ui.window" = { fg = "illusion_blue" }
+"ui.help" = { fg = "catskill_white", bg = "midnight_blue" }
+
+"ui.text" = { fg = "solid_gray" }
+"ui.text.focus" = { fg = "catskill_white" }
+"ui.text.inactive" = "dim_gray"
+"ui.text.directory" = { fg = "cornflower_blue" }
+"ui.virtual" = { fg = "illusion_blue" }
+"ui.virtual.ruler" = { bg = "midnight_blue" }
+"ui.virtual.jump_label" = { fg = "salmon", modifiers = ["bold"] }
+
+"ui.selection" = { bg = "bold_navy" }
+"ui.selection.primary" = { bg = "trendy_darkblue" }
+"ui.cursor.match" = { fg = "spring_yellow", modifiers = [ "bold" ], underline = { style = "line" } }
+"ui.cursor" = { modifiers = ["reversed"] }
+"ui.cursorline.primary" = { bg = "midnight_blue" }
+
+"ui.menu" = { fg = "catskill_white", bg = "midnight_blue" }
+"ui.menu.selected" = { bg = "glossy_purple" }
+"ui.menu.scroll" = { fg = "brilliant_purple", bg = "midnight_blue" }
+
+"diagnostic.hint" = { underline = { color = "pine_green", style = "curl" } }
+"diagnostic.info" = { underline = { color = "fashion_blue", style = "curl" } }
+"diagnostic.warning" = { underline = { color = "spring_yellow", style = "curl" } }
+"diagnostic.error" = { underline = { color = "cerise", style = "curl" } }
+"diagnostic.unnecessary" = { modifiers = ["dim"] }
+"diagnostic.deprecated" = { modifiers = ["crossed_out"] }
+
+"hint" = "pine_green"
+"info" = "fashion_blue"
+"warning" = "spring_yellow"
+"error" = "cerise"
+
+[palette]
+"catskill_white" = "#eef7f7"
+"pastel_lemon" = "#f1efab"
+"spring_yellow" = "#f3e65f"
+"golden_crust" = "#ebac5b"
+"burnt_sienna" = "#e37256"
+"salmon" = "#de5560"
+"cerise" = "#d9386a"
+"byzantine" ="#b42bac"
+"electric_purple" = "#8f1ded"
+"glossy_purple" = "#781ad5"
+"brilliant_purple" = "#6017bc"
+"illusion_blue" = "#4914a3"
+"deep_indigo" = "#31108a"
+"midnight_blue" = "#100144"
+"midnight_black" = "#100112"
+"deep_black" = "#000000"
+"orchid" = "#dc66e9"
+"neon_chartreuse" = "#d9ff2f"
+"harmony_green" = "#76f0a6"
+"turquoise" = "#74d9d4"
+"cornflower_blue" = "#4c8ad4"
+"fashion_blue" = "#243bd3"
+"trendy_darkblue" = "#0c1eb2"
+"bold_navy" = "#0e107b"
+"dim_gray" = "#696969"
+"solid_gray" = "#969696"
+"pine_green" = "#206d4b"
